@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/FokusNIK9/mcp-gpt-auto/schemas/subagent-result.schema.json",
+  "title": "SubagentResult",
+  "type": "object",
+  "required": [
+    "status",
+    "summary",
+    "filesChanged",
+    "commandsRun",
+    "tests",
+    "risks",
+    "requiresApproval",
+    "nextSteps"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "partial",
+        "failed"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "filesChanged": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "reason"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "commandsRun": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "command",
+          "exitCode",
+          "summary"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "exitCode": {
+            "type": "integer"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "tests": {
+      "type": "object",
+      "required": [
+        "ran",
+        "passed",
+        "details"
+      ],
+      "properties": {
+        "ran": {
+          "type": "boolean"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "details": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requiresApproval": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "reason"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "nextSteps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}
