@@ -1,0 +1,31 @@
+{
+  "workspace": ".",
+  "allowDesktopRead": true,
+  "allowDesktopWrite": false,
+  "allowGitPush": false,
+  "allowedCommands": [
+    "git",
+    "node",
+    "npm",
+    "pnpm",
+    "dotnet",
+    "python",
+    "gemini",
+    "powershell",
+    "cmd"
+  ],
+  "blockedPaths": [
+    ".env",
+    ".ssh",
+    "AppData",
+    "id_rsa",
+    "id_ed25519"
+  ],
+  "requireApproval": [
+    "git.push",
+    "package.install",
+    "desktop.click",
+    "desktop.type_text",
+    "network"
+  ]
+}
