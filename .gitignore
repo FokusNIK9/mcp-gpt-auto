@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.agent/policy.json
+.agent/tasks/
+.agent/logs/
+.agent/artifacts/
+*.local
+.DS_Store
