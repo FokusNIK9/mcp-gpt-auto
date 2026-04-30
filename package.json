@@ -1,0 +1,25 @@
+{
+  "name": "mcp-gpt-auto",
+  "version": "0.1.0",
+  "description": "Local MCP gateway for controlled agentic work on a developer PC.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "mcp-gpt-auto": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.0"
+  }
+}
