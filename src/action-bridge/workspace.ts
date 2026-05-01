@@ -360,7 +360,7 @@ export function registerWorkspaceRoutes(app: express.Application) {
         return res.status(400).json({ ok: false, error: "Search text not found in file" });
       }
 
-      const after = before.replace(search, replace);
+      const after = before.replace(search, () => replace);
       await fs.writeFile(file, after, "utf8");
 
       res.json({ ok: true, path: relPath(file), replacements: 1 });
@@ -492,8 +492,13 @@ export function registerWorkspaceRoutes(app: express.Application) {
           args = ["/c", scriptFile];
           break;
         case "sh":
-          command = "cmd";
-          args = ["/c", "bash", scriptFile];
+          if (process.platform === "win32") {
+            command = "cmd";
+            args = ["/c", "bash", scriptFile];
+          } else {
+            command = "bash";
+            args = [scriptFile];
+          }
           break;
         case "py":
           command = "python";
@@ -580,7 +585,7 @@ export function registerWorkspaceRoutes(app: express.Application) {
       const raw = await fs.readFile(logFile, "utf8");
       const data = JSON.parse(raw);
 
-      res.json({ ok: true, ...data });
+      res.json({ ok: true, ...data, stdout: redactText(data.stdout || ""), stderr: redactText(data.stderr || "") });
     } catch {
       res.status(404).json({ ok: false, error: "Log not found" });
     }
