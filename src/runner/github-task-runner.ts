@@ -139,21 +139,33 @@ async function processTask(taskPath: string) {
             }
         } else if (task.type === "gemini") {
             const tDir = taskDir(taskId);
-            await fs.mkdir(path.join(tDir, "result"), { recursive: true });
-            const prompt = `# Task\n${task.instructions}\n\n# Rules\nReturn JSON result.\n`;
-            await fs.writeFile(path.join(tDir, "prompt.md"), prompt);
-            
-            console.log(`[Runner] Running Gemini flow for ${taskId}`);
-            const r = await run("gemini", ["--task", taskId], root) as any;
+            const resultDir = path.join(tDir, "result");
+            await fs.mkdir(resultDir, { recursive: true });
+
+            const prompt = `# Task\n${task.instructions}\n\n# Workspace\n${root}\n\n# Rules\nReturn JSON result.\n`;
+            const promptPath = path.join(tDir, "prompt.md");
+            await fs.writeFile(promptPath, prompt);
+
+            const geminiCmd = process.env.GEMINI_CMD || "gemini";
+            console.log(`[Runner] Running Gemini flow for ${taskId} (piping prompt via stdin)`);
+
+            const r = await run(geminiCmd, [], root, prompt, 300000) as any;
+
+            // Save stdout/stderr to result dir for debugging
+            if (r.stdout) await fs.writeFile(path.join(resultDir, "subagent-stdout.txt"), r.stdout).catch(() => {});
+            if (r.stderr) await fs.writeFile(path.join(resultDir, "subagent-stderr.txt"), r.stderr).catch(() => {});
+
             result.commandsRun.push({
-                command: `gemini --task ${taskId}`,
+                command: `echo prompt | ${geminiCmd}`,
                 exitCode: r.exitCode,
                 stdoutTail: redactText(r.stdout.slice(-2000)),
                 stderrTail: redactText(r.stderr.slice(-2000))
             });
             if (!r.ok) {
                 result.status = "failed";
-                result.summary = "Gemini flow failed";
+                result.summary = `Gemini flow failed (exit ${r.exitCode})`;
+            } else {
+                result.summary = `Gemini subagent completed for task ${taskId}`;
             }
         } else if (task.type === "review") {
             console.log(`[Runner] Running automated review for ${taskId}`);
