@@ -6,6 +6,7 @@ import { root } from "../gateway/config.js";
 import { redactText, redactSecrets } from "../gateway/redact.js";
 import { QueueTaskRequestSchema } from "./types.js";
 import { registerDashboardRoutes, initWebSocket, broadcast, notifyWebhook } from "./dashboard.js";
+import { registerMcpSseRoutes } from "./mcp-sse.js";
 
 const app = express();
 app.use(express.json());
@@ -274,7 +275,14 @@ const auth = (req: express.Request, res: express.Response, next: express.NextFun
     return res.status(403).json({ ok: false, error: "Dashboard is only accessible from localhost" });
   }
   
-  const providedToken = req.headers["x-agent-token"];
+  // Accept token from X-Agent-Token header or Authorization: Bearer header
+  const agentToken = req.headers["x-agent-token"];
+  const authHeader = req.headers["authorization"];
+  const bearerToken = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : null;
+  const providedToken = agentToken || bearerToken;
+
   if (!TOKEN) {
     console.error("[Bridge] ACTION_BRIDGE_TOKEN not set in environment");
     return res.status(500).json({ ok: false, error: "Server misconfigured: missing token" });
@@ -551,6 +559,9 @@ app.get("/dashboard", async (req, res) => {
 // Register dashboard routes (UI, API, cancel, retry)
 registerDashboardRoutes(app);
 
+// Register MCP SSE transport (for Devin / external MCP clients)
+registerMcpSseRoutes(app);
+
 // Create HTTP server and attach WebSocket
 const server = http.createServer(app);
 initWebSocket(server);
@@ -559,6 +570,7 @@ server.listen(PORT, HOST, () => {
   console.log(`[Bridge] Action bridge listening on http://${HOST}:${PORT}`);
   console.log(`[Bridge] Dashboard: http://${HOST}:${PORT}/ui`);
   console.log(`[Bridge] WebSocket: ws://${HOST}:${PORT}/ws`);
+  console.log(`[Bridge] MCP SSE: ${PUBLIC_URL}/mcp`);
   console.log(`[Bridge] OpenAPI: ${PUBLIC_URL}/openapi.json`);
   if (!TOKEN) {
     console.warn("[Bridge] WARNING: ACTION_BRIDGE_TOKEN is not set. Auth will fail.");
