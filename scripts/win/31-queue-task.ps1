@@ -73,6 +73,8 @@ if (-not (Test-Path $inboxDir)) {
 
 $outputPath = Join-Path $inboxDir "$taskId.json"
 $json = $task | ConvertTo-Json -Depth 10
+# Fix PowerShell's flattening of single-element arrays in JSON
+$json = $json -replace '"args":\s*"([^"]*)"', '"args": ["$1"]'
 
 # Write file without BOM
 [System.IO.File]::WriteAllText($outputPath, $json)
