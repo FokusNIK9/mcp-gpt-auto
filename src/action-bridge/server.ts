@@ -260,11 +260,19 @@ async function ensureQueueDirs() {
   await Promise.all([inboxDir, runningDir, doneDir, failedDir, reportsDir].map(dir => fs.mkdir(dir, { recursive: true })));
 }
 
+function isLocalRequest(req: express.Request): boolean {
+  const addr = req.socket.remoteAddress || "";
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+}
+
 const auth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   // Public endpoints (no auth needed)
   if (req.path === "/health" || req.path === "/openapi.json") return next();
-  // Local-only dashboard endpoints (no auth — only accessible on localhost)
-  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws") return next();
+  // Dashboard endpoints — local access only (blocked through ngrok/tunnels)
+  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws") {
+    if (isLocalRequest(req)) return next();
+    return res.status(403).json({ ok: false, error: "Dashboard is only accessible from localhost" });
+  }
   
   const providedToken = req.headers["x-agent-token"];
   if (!TOKEN) {

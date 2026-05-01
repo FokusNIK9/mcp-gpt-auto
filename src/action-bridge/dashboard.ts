@@ -37,9 +37,10 @@ export function initWebSocket(server: http.Server) {
   setInterval(async () => {
     try {
       const snap = await buildActivitySnapshot();
-      const json = JSON.stringify(snap);
-      if (json !== lastSnapshot) {
-        lastSnapshot = json;
+      // Compare only tasks+summary (exclude updatedAt which changes every call)
+      const compareKey = JSON.stringify({ tasks: snap.tasks, summary: snap.summary });
+      if (compareKey !== lastSnapshot) {
+        lastSnapshot = compareKey;
         broadcast({ type: "update", data: snap });
       }
     } catch { /* ignore */ }
