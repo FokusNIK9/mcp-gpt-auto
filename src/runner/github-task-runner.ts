@@ -28,7 +28,7 @@ async function pushChanges(message: string) {
     }
     console.log(`[Runner] Pushing changes: ${message}`);
     await run("git", ["add", "."], root);
-    const commitR = await run("git", ["commit", "-m", message], root) as any;
+    const commitR = await run("git", ["commit", "-m", `"${message}"`], root) as any;
     if (!commitR.ok && !commitR.stdout.includes("nothing to commit")) {
         console.error("[Runner] git commit failed:", commitR.stderr);
         return false;

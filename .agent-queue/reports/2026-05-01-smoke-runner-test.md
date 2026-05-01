@@ -3,26 +3,13 @@
 Status: ❌ FAILED
 
 ## Summary
-Command failed: npm
+Unknown task type: undefined
 
 ## Commands Run
-### npm run build
-Exit Code: null
-
-#### Stdout
-```
-
-```
-
-#### Stderr
-```
-spawn npm ENOENT
-```
-
 
 ## Git Status
 ```
- .../running/2026-05-01-smoke-runner-test.json      | 24 ----------------------
- 1 file changed, 24 deletions(-)
+ .agent-queue/running/2026-05-01-smoke-runner-test.json | 17 -----------------
+ 1 file changed, 17 deletions(-)
 
 ```

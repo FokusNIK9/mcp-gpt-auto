@@ -1,0 +1,10 @@
+{
+  "taskId": "2026-05-01-smoke-runner-test",
+  "status": "failed",
+  "startedAt": "2026-05-01T00:39:27.051Z",
+  "finishedAt": "2026-05-01T00:39:27.052Z",
+  "summary": "Unknown task type: undefined",
+  "commandsRun": [],
+  "filesChanged": [],
+  "reportPath": ".agent-queue/reports/2026-05-01-smoke-runner-test.md"
+}

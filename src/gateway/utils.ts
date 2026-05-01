@@ -56,7 +56,7 @@ export async function run(command: string, args: string[], cwd: string, input = 
 		let stdout = "";
 		let stderr = "";
 		let timedOut = false;
-		const child = spawn(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+		const child = spawn(command, args, { cwd, windowsHide: true, shell: process.platform === "win32", stdio: ["pipe", "pipe", "pipe"] });
 		const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, Math.min(timeoutMs, 900000));
 
 		child.stdout.setEncoding("utf8");
