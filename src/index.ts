@@ -104,6 +104,35 @@ function taskDir(taskId: string)
 
 const server = new McpServer({ name: "mcp-gpt-auto", version: "0.1.0" });
 
+server.tool("desktop.screenshot", "Take Windows screenshot.", {}, async () =>
+{
+	const screenshotsDir = path.join(agent, "artifacts", "screenshots");
+	await fs.mkdir(screenshotsDir, { recursive: true });
+	const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+	const fileName = `${timestamp}.png`;
+	const filePath = path.join(screenshotsDir, fileName);
+
+	const psScript = `
+		Add-Type -AssemblyName System.Windows.Forms
+		Add-Type -AssemblyName System.Drawing
+		$screen = [System.Windows.Forms.Screen]::PrimaryScreen
+		$top    = $screen.Bounds.Top
+		$left   = $screen.Bounds.Left
+		$width  = $screen.Bounds.Width
+		$height = $screen.Bounds.Height
+		$bmp    = New-Object System.Drawing.Bitmap $width, $height
+		$graphics = [System.Drawing.Graphics]::FromImage($bmp)
+		$graphics.CopyFromScreen($left, $top, 0, 0, $bmp.Size)
+		$bmp.Save("${filePath.replaceAll("\\", "\\\\")}", [System.Drawing.Imaging.ImageFormat]::Png)
+		$graphics.Dispose()
+		$bmp.Dispose()
+	`;
+
+	const r = await run("powershell", ["-Command", psScript], root);
+	await audit("desktop.screenshot", Boolean((r as any).ok), { path: rel(filePath) });
+	return out({ ok: (r as any).ok, path: rel(filePath), error: (r as any).stderr });
+});
+
 server.tool("gateway.health", "Health check.", {}, async () =>
 {
 	const data = { ok: true, root, agent, tools: ["fs.read", "fs.write", "fs.patch", "shell.run", "git.status", "git.diff", "task.create", "subagent.gemini.run", "review.bundle"] };
@@ -153,6 +182,25 @@ server.tool("shell.run", "Run allowed command.", { command: z.string(), args: z.
 server.tool("git.status", "git status --short.", {}, async () => out(await run("git", ["status", "--short"], root)));
 server.tool("git.diff", "git diff.", { stat: z.boolean().default(false) }, async ({ stat }) => out(await run("git", stat ? ["diff", "--stat"] : ["diff"], root)));
 
+server.tool("git.commit", "git commit changes.", { message: z.string(), paths: z.array(z.string()) }, async ({ message, paths }) =>
+{
+	for (const p of paths)
+	{
+		safe(p);
+	}
+
+	const addR = await run("git", ["add", ...paths], root) as any;
+
+	if (!addR.ok)
+	{
+		return out(addR);
+	}
+
+	const commitR = await run("git", ["commit", "-m", message], root) as any;
+	await audit("git.commit", commitR.ok, { message, paths });
+	return out(commitR);
+});
+
 server.tool("task.create", "Create task prompt.", { taskId: z.string(), title: z.string(), body: z.string() }, async ({ taskId, title, body }) =>
 {
 	const dir = taskDir(taskId);
@@ -165,17 +213,66 @@ server.tool("task.create", "Create task prompt.", { taskId: z.string(), title: z
 	return out({ ok: true, taskId, promptPath: rel(path.join(dir, "prompt.md")) });
 });
 
+server.tool("task.done", "Mark task as done.", { taskId: z.string(), summary: z.string() }, async ({ taskId, summary }) =>
+{
+	const dir = taskDir(taskId);
+	const taskJsonPath = path.join(dir, "task.json");
+	const data = JSON.parse(await fs.readFile(taskJsonPath, "utf8"));
+	data.status = "done";
+	data.finishedAt = new Date().toISOString();
+	data.summary = summary;
+	await fs.writeFile(taskJsonPath, JSON.stringify(data, null, 2));
+	const finalPath = path.join(dir, "final.md");
+	await fs.writeFile(finalPath, `# Task Done: ${taskId}\n\n${summary}\n`);
+	await audit("task.done", true, { taskId });
+	return out({ ok: true, finalPath: rel(finalPath) });
+});
+
 server.tool("subagent.gemini.run", "Run Gemini for task prompt.", { taskId: z.string(), timeoutMs: z.number().default(300000) }, async ({ taskId, timeoutMs }) =>
 {
 	const dir = taskDir(taskId);
 	const prompt = await fs.readFile(path.join(dir, "prompt.md"), "utf8");
 	const resultDir = path.join(dir, "result");
 	await fs.mkdir(resultDir, { recursive: true });
-	const r = await run("gemini", [], root, prompt, timeoutMs);
-	await fs.writeFile(path.join(resultDir, "subagent-stdout.txt"), (r as any).stdout ?? "");
-	await fs.writeFile(path.join(resultDir, "subagent-stderr.txt"), (r as any).stderr ?? "");
-	await audit("subagent.gemini.run", Boolean((r as any).ok), { taskId });
-	return out({ ok: (r as any).ok, taskId, stdoutPath: rel(path.join(resultDir, "subagent-stdout.txt")) });
+
+	const r = await run("gemini", [], root, prompt, timeoutMs) as any;
+	const stdout = r.stdout ?? "";
+	const stderr = r.stderr ?? "";
+
+	await fs.writeFile(path.join(resultDir, "subagent-stdout.txt"), stdout);
+	await fs.writeFile(path.join(resultDir, "subagent-stderr.txt"), stderr);
+
+	let jsonFound = false;
+	let parsed = null;
+
+	const jsonMatch = stdout.match(/```json\s*([\s\S]*?)\s*```/) || stdout.match(/(\{[\s\S]*\})/);
+
+	if (jsonMatch)
+	{
+		try
+		{
+			parsed = JSON.parse(jsonMatch[1]);
+			await fs.writeFile(path.join(resultDir, "subagent-result.json"), JSON.stringify(parsed, null, 2));
+			jsonFound = true;
+		}
+		catch
+		{
+			await fs.writeFile(path.join(resultDir, "subagent-result.raw.txt"), stdout);
+		}
+	}
+	else
+	{
+		await fs.writeFile(path.join(resultDir, "subagent-result.raw.txt"), stdout);
+	}
+
+	await audit("subagent.gemini.run", r.ok, { taskId, jsonFound });
+
+	if (r.ok && !jsonFound && stdout)
+	{
+		return out({ ok: false, status: "partial", reason: "Gemini returned non-JSON output", taskId });
+	}
+
+	return out({ ok: r.ok, taskId, jsonFound, result: parsed, stdoutPath: rel(path.join(resultDir, "subagent-stdout.txt")) });
 });
 
 server.tool("review.bundle", "Create review bundle.", { taskId: z.string() }, async ({ taskId }) =>
@@ -190,6 +287,61 @@ server.tool("review.bundle", "Create review bundle.", { taskId: z.string() }, as
 	await fs.writeFile(path.join(reviewDir, "review-bundle.md"), bundle);
 	await audit("review.bundle", true, { taskId });
 	return out({ ok: true, path: rel(path.join(reviewDir, "review-bundle.md")) });
+});
+
+server.tool("review.run", "Automated code review.", { taskId: z.string(), runBuild: z.boolean().default(true) }, async ({ taskId, runBuild }) =>
+{
+	const dir = taskDir(taskId);
+	const reviewDir = path.join(dir, "review");
+	await fs.mkdir(reviewDir, { recursive: true });
+
+	const status = await run("git", ["status", "--short"], root) as any;
+	const stat = await run("git", ["diff", "--stat"], root) as any;
+	const diff = await run("git", ["diff"], root) as any;
+
+	const issues: any[] = [];
+	const secrets = ["api_key", "apikey", "token", "secret", "password", "BEGIN PRIVATE KEY", ".env"];
+	const diffLow = diff.stdout.toLowerCase();
+
+	for (const s of secrets)
+	{
+		if (diffLow.includes(s.toLowerCase()))
+		{
+			issues.push({ severity: "critical", message: `Potential secret found: ${s}` });
+		}
+	}
+
+	let buildStatus = "skipped";
+
+	if (runBuild)
+	{
+		const buildR = await run("npm", ["run", "build"], root) as any;
+		buildStatus = buildR.ok ? "passed" : "failed";
+		if (!buildR.ok)
+		{
+			issues.push({ severity: "high", message: "Build failed" });
+		}
+	}
+
+	const statusText = issues.some(i => i.severity === "critical") ? "rejected" : (issues.some(i => i.severity === "high") ? "needs_changes" : "approved");
+	const decision = statusText === "approved" ? "commit" : (statusText === "needs_changes" ? "request_subagent_fix" : "ask_user");
+
+	const result = {
+		status: statusText,
+		summary: `Review for ${taskId}. Issues found: ${issues.length}`,
+		diffReviewed: true,
+		tests: { build: buildStatus },
+		issues,
+		decision
+	};
+
+	await fs.writeFile(path.join(reviewDir, "review-result.json"), JSON.stringify(result, null, 2));
+
+	const report = `# Review Report: ${taskId}\n\nStatus: ${statusText}\nDecision: ${decision}\n\n## Issues\n${issues.length ? issues.map(i => `- [${i.severity}] ${i.message}`).join("\n") : "None"}\n\n## Git Status\n\`\`\`\n${status.stdout}\n\`\`\`\n\n## Diff Stat\n\`\`\`\n${stat.stdout}\n\`\`\`\n`;
+	await fs.writeFile(path.join(reviewDir, "review.md"), report);
+
+	await audit("review.run", true, { taskId, status: statusText });
+	return out(result);
 });
 
 await fs.mkdir(agent, { recursive: true });

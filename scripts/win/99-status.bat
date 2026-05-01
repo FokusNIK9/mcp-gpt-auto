@@ -15,12 +15,20 @@ echo Git status:
 git status --short 2>nul
 
 echo.
+echo Recent commits:
+git log --oneline -5 2>nul
+
+echo.
 echo Tasks:
 if exist ".agent\tasks" (
   dir /b ".agent\tasks"
 ) else (
   echo No .agent\tasks directory.
 )
+
+echo.
+echo Audit log location:
+echo .agent\logs\audit.jsonl
 
 echo.
 echo Recent task files:

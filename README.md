@@ -46,6 +46,37 @@ scripts/win/
 - `review.run`;
 - `task.done`.
 
+## MCP client config
+
+Добавь в конфиг твоего MCP-клиента (например, Claude Desktop или другой):
+
+```json
+{
+  "mcpServers": {
+    "mcp-gpt-auto": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\user\\Documents\\trash\\Program\\2026-05\\01.05\\mcp-gpt-auto\\dist\\index.js"
+      ],
+      "env": {
+        "MCP_AUTO_WORKSPACE": "C:\\Users\\user\\Documents\\trash\\Program\\2026-05\\01.05\\mcp-gpt-auto"
+      }
+    }
+  }
+}
+```
+
+## Доступные инструменты (Stage 2)
+
+- `gateway.health` — проверка состояния.
+- `fs.read`, `fs.write`, `fs.patch` — работа с файлами.
+- `shell.run` — запуск разрешённых команд.
+- `git.status`, `git.diff`, `git.commit` — работа с Git.
+- `task.create`, `task.done` — управление задачами.
+- `subagent.gemini.run` — запуск саб-агента.
+- `review.bundle`, `review.run` — ревью изменений.
+- `desktop.screenshot` — скриншот экрана.
+
 ## Быстрый старт на Windows
 
 ```bat
