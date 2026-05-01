@@ -142,21 +142,41 @@ async function processTask(taskPath: string) {
             const resultDir = path.join(tDir, "result");
             await fs.mkdir(resultDir, { recursive: true });
 
-            const prompt = `# Task\n${task.instructions}\n\n# Workspace\n${root}\n\n# Rules\nReturn JSON result.\n`;
+            const prompt = [
+                "# Task",
+                task.instructions,
+                "",
+                "# Workspace",
+                root,
+                "",
+                "# Rules",
+                "You are running as an external local agent for mcp-gpt-auto.",
+                "Work inside the current workspace unless the task explicitly asks for a safe local desktop action.",
+                "Return a concise final status with commands run and verification."
+            ].join("\n");
             const promptPath = path.join(tDir, "prompt.md");
             await fs.writeFile(promptPath, prompt);
 
             const geminiCmd = process.env.GEMINI_CMD || "gemini";
-            console.log(`[Runner] Running Gemini flow for ${taskId} (piping prompt via stdin)`);
+            console.log(`[Runner] Running Gemini flow for ${taskId} in headless prompt mode`);
 
-            const r = await run(geminiCmd, [], root, prompt, 300000) as any;
+            const escapedPromptPath = promptPath.replace(/'/g, "''");
+            const r = process.platform === "win32"
+                ? await run("powershell", [
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    `$prompt = Get-Content -Raw -LiteralPath '${escapedPromptPath}'; ${geminiCmd} --skip-trust --approval-mode yolo --prompt $prompt`
+                ], root, "", 300000) as any
+                : await run(geminiCmd, ["--skip-trust", "--approval-mode", "yolo", "--prompt", prompt], root, "", 300000) as any;
 
             // Save stdout/stderr to result dir for debugging
             if (r.stdout) await fs.writeFile(path.join(resultDir, "subagent-stdout.txt"), r.stdout).catch(() => {});
             if (r.stderr) await fs.writeFile(path.join(resultDir, "subagent-stderr.txt"), r.stderr).catch(() => {});
 
             result.commandsRun.push({
-                command: `echo prompt | ${geminiCmd}`,
+                command: `${geminiCmd} --skip-trust --approval-mode yolo --prompt <${taskId}>`,
                 exitCode: r.exitCode,
                 stdoutTail: redactText(r.stdout.slice(-2000)),
                 stderrTail: redactText(r.stderr.slice(-2000))
