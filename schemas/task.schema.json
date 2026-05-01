@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "taskId": { "type": "string" },
+    "title": { "type": "string" },
+    "status": { "enum": ["planned", "in_progress", "done", "failed"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "summary": { "type": "string" }
+  },
+  "required": ["taskId", "title", "status"]
+}
