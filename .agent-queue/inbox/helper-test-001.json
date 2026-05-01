@@ -1,0 +1,26 @@
+{
+    "createdBy":  "manual-cli",
+    "workspace":  ".",
+    "createdAt":  "2026-05-01T01:37:56.895Z",
+    "requiresPush":  true,
+    "allowedFiles":  [
+                         "README.md",
+                         "docs/**",
+                         "scripts/**",
+                         "src/**",
+                         ".agent-queue/**",
+                         "package.json",
+                         "tsconfig.json"
+                     ],
+    "type":  "node --version",
+    "instructions":  "Manually queued task: Helper Test Task",
+    "commands":  [
+                     {
+                         "args":  "--version",
+                         "command":  "npm"
+                     }
+                 ],
+    "taskId":  "helper-test-001",
+    "title":  "Helper Test Task",
+    "priority":  "normal"
+}
