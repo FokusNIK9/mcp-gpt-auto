@@ -1,14 +1,14 @@
 param(
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory=$false, Position=0)]
     [string]$taskId,
     
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory=$false, Position=1)]
     [string]$title,
     
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory=$false, Position=2)]
     [string]$type = "shell",
     
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory=$false, Position=3, ValueFromRemainingArguments=$true)]
     [string[]]$commands
 )
 
