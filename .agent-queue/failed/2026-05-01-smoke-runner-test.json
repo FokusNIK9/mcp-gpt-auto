@@ -1,8 +1,8 @@
 {
   "taskId": "2026-05-01-smoke-runner-test",
   "status": "failed",
-  "startedAt": "2026-05-01T00:39:27.051Z",
-  "finishedAt": "2026-05-01T00:39:27.052Z",
+  "startedAt": "2026-05-01T00:42:12.092Z",
+  "finishedAt": "2026-05-01T00:42:12.093Z",
   "summary": "Unknown task type: undefined",
   "commandsRun": [],
   "filesChanged": [],

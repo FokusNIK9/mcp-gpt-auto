@@ -9,7 +9,7 @@ Unknown task type: undefined
 
 ## Git Status
 ```
- .agent-queue/running/2026-05-01-smoke-runner-test.json | 17 -----------------
- 1 file changed, 17 deletions(-)
+ .agent-queue/running/2026-05-01-smoke-runner-test.json | 10 ----------
+ 1 file changed, 10 deletions(-)
 
 ```
