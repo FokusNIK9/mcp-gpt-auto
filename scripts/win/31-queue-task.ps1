@@ -61,7 +61,7 @@ foreach ($cmdStr in $commands) {
     $parts = $cmdStr -split " "
     $cmdObj = @{
         command = $parts[0]
-        args = if ($parts.Length -gt 1) { $parts[1..($parts.Length-1)] } else { @() }
+        args = if ($parts.Length -gt 1) { [string[]]$parts[1..($parts.Length-1)] } else { [string[]]@() }
     }
     $task.commands += $cmdObj
 }

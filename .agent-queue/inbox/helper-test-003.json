@@ -1,0 +1,30 @@
+{
+    "createdBy":  "manual-cli",
+    "workspace":  ".",
+    "createdAt":  "2026-05-01T01:38:49.305Z",
+    "requiresPush":  true,
+    "allowedFiles":  [
+                         "README.md",
+                         "docs/**",
+                         "scripts/**",
+                         "src/**",
+                         ".agent-queue/**",
+                         "package.json",
+                         "tsconfig.json"
+                     ],
+    "type":  "shell",
+    "instructions":  "Manually queued task: Helper Fix Test 2",
+    "commands":  [
+                     {
+                         "args":  "--version",
+                         "command":  "npm"
+                     },
+                     {
+                         "args":  "--version",
+                         "command":  "node"
+                     }
+                 ],
+    "taskId":  "helper-test-003",
+    "title":  "Helper Fix Test 2",
+    "priority":  "normal"
+}
