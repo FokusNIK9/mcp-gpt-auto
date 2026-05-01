@@ -71,7 +71,7 @@ async function pushChanges(message: string) {
     console.log("[Runner] Git Diff Stat:\n", redactText(diffStat.stdout));
 
     await runGit(["add", "."]);
-    const commitR = await runGit(["commit", "-m", message]);
+    const commitR = await run("git", gitAuthArgs(["commit", "-F", "-"]), root, message) as any;
     
     if (!commitR.ok && !commitR.stdout.includes("nothing to commit")) {
         console.error("[Runner] git commit failed:", redactText(commitR.stderr));

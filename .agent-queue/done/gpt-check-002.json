@@ -1,0 +1,17 @@
+{
+  "taskId": "gpt-check-002",
+  "status": "done",
+  "startedAt": "2026-05-01T02:51:11.897Z",
+  "finishedAt": "2026-05-01T02:51:13.542Z",
+  "summary": "Task completed successfully",
+  "commandsRun": [
+    {
+      "command": "npm run check",
+      "exitCode": 0,
+      "stdoutTail": "\n> mcp-gpt-auto@0.1.0 check\n> tsc -p tsconfig.json --noEmit\n\n",
+      "stderrTail": ""
+    }
+  ],
+  "filesChanged": [],
+  "reportPath": ".agent-queue/reports/gpt-check-002.md"
+}
