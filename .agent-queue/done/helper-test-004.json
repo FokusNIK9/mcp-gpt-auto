@@ -1,0 +1,23 @@
+{
+  "taskId": "helper-test-004",
+  "status": "done",
+  "startedAt": "2026-05-01T01:39:18.897Z",
+  "finishedAt": "2026-05-01T01:39:19.258Z",
+  "summary": "Task completed successfully",
+  "commandsRun": [
+    {
+      "command": "npm --version",
+      "exitCode": 0,
+      "stdoutTail": "11.6.0\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "node --version",
+      "exitCode": 0,
+      "stdoutTail": "v22.19.0\r\n",
+      "stderrTail": ""
+    }
+  ],
+  "filesChanged": [],
+  "reportPath": ".agent-queue/reports/helper-test-004.md"
+}
