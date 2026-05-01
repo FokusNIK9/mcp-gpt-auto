@@ -19,15 +19,23 @@ function gitAuthArgs(args: string[]) {
     const token = process.env.GITHUB_TOKEN;
     if (!token) return args;
 
-    const basicToken = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+    const remoteUrl = process.env.GITHUB_REMOTE_URL || "https://github.com/FokusNIK9/mcp-gpt-auto.git";
+    const authedRemoteUrl = remoteUrl.replace("https://", `https://x-access-token:${encodeURIComponent(token)}@`);
+
+    if (args[0] === "pull") {
+        const pullOptions = args.slice(1);
+        return ["pull", ...pullOptions, authedRemoteUrl, "main"];
+    }
+
+    if (args[0] === "push") {
+        return ["push", authedRemoteUrl, ...args.slice(2)];
+    }
 
     return [
         "-c",
         "credential.helper=",
         "-c",
         "core.askPass=",
-        "-c",
-        `http.extraHeader=AUTHORIZATION: basic ${basicToken}`,
         ...args
     ];
 }
