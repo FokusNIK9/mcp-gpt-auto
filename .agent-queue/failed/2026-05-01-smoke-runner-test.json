@@ -1,0 +1,17 @@
+{
+  "taskId": "2026-05-01-smoke-runner-test",
+  "status": "failed",
+  "startedAt": "2026-05-01T00:38:55.931Z",
+  "finishedAt": "2026-05-01T00:38:55.936Z",
+  "summary": "Command failed: npm",
+  "commandsRun": [
+    {
+      "command": "npm run build",
+      "exitCode": null,
+      "stdoutTail": "",
+      "stderrTail": "spawn npm ENOENT"
+    }
+  ],
+  "filesChanged": [],
+  "reportPath": ".agent-queue/reports/2026-05-01-smoke-runner-test.md"
+}
