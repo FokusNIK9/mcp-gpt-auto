@@ -1,0 +1,31 @@
+{
+  "taskId": "gpt-20260501-002",
+  "title": "Get folder size",
+  "type": "shell",
+  "priority": "normal",
+  "instructions": "Calculate total size of folder C:\\Users\\user\\Documents\\trash\\Program\\2026-05",
+  "commands": [
+    {
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "$path = 'C:\\Users\\user\\Documents\\trash\\Program\\2026-05'; if (Test-Path $path) { $size = (Get-ChildItem -Path $path -Recurse -File | Measure-Object -Property Length -Sum).Sum; [PSCustomObject]@{ Path=$path; Bytes=$size; MB=[Math]::Round($size/1MB,2); GB=[Math]::Round($size/1GB,3) } } else { Write-Error 'Path not found' }"
+      ]
+    }
+  ],
+  "allowedFiles": [
+    "README.md",
+    "docs/**",
+    "scripts/**",
+    "src/**",
+    ".agent-queue/**",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json"
+  ],
+  "requiresPush": true,
+  "createdAt": "2026-05-01T03:24:41.899Z",
+  "createdBy": "gpt-action-bridge",
+  "workspace": "."
+}
