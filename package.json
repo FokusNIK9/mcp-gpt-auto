@@ -11,7 +11,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "runner:once": "node dist/runner/github-task-runner.js --once",
+    "runner:loop": "node dist/runner/github-task-runner.js --loop"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

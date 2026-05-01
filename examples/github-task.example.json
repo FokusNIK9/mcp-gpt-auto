@@ -1,0 +1,27 @@
+{
+  "taskId": "2026-05-01-test-001",
+  "title": "Check local agent",
+  "createdAt": "2026-05-01T00:00:00.000Z",
+  "createdBy": "chatgpt",
+  "type": "shell",
+  "priority": "normal",
+  "workspace": ".",
+  "allowedFiles": [
+    "README.md",
+    "src/**",
+    "scripts/**",
+    "docs/**"
+  ],
+  "instructions": "Verify that the local agent can build the project and run a smoke test.",
+  "commands": [
+    {
+      "command": "npm",
+      "args": ["run", "build"]
+    },
+    {
+      "command": "node",
+      "args": ["scripts/smoke-test.js"]
+    }
+  ],
+  "requiresPush": true
+}

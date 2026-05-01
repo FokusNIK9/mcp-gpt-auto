@@ -46,6 +46,23 @@ scripts/win/
 - `review.run`;
 - `task.done`.
 
+## GitHub Task Runner
+
+Этот модуль позволяет ChatGPT управлять локальным ПК через GitHub-очередь задач, даже если прямой MCP-канал не подключён.
+
+### Как это работает
+1. Ты (или ChatGPT) создаёшь JSON-задачу в `.agent-queue/inbox/`.
+2. Локальный Runner делает `git pull`, видит задачу и выполняет её.
+3. Результат и отчёт пушатся обратно в GitHub.
+
+### Запуск Runner на ПК
+```bat
+cd /d "C:\Users\user\Documents\trash\Program\2026-05\01.05\mcp-gpt-auto"
+
+set CONFIRM_PUSH=YES
+scripts\win\21-run-task-runner-loop.bat
+```
+
 ## MCP client config
 
 Добавь в конфиг твоего MCP-клиента (например, Claude Desktop или другой):
