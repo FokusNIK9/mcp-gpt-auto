@@ -3,6 +3,7 @@ import path from "node:path";
 import { TaskFile, TaskResult } from "./task-types.js";
 import { run, audit, rel, taskDir } from "../gateway/utils.js";
 import { root } from "../gateway/config.js";
+import { redactText, redactSecrets } from "../gateway/redact.js";
 
 const queueDir = path.join(root, ".agent-queue");
 const inboxDir = path.join(queueDir, "inbox");
@@ -16,7 +17,7 @@ async function pullChanges() {
     // Use --ff-only to avoid merge conflicts in the runner
     const r = await run("git", ["pull", "--ff-only"], root) as any;
     if (!r.ok) {
-        console.error("[Runner] git pull failed:", r.stderr);
+        console.error("[Runner] git pull failed:", redactText(r.stderr));
         return false;
     }
     return true;
@@ -34,20 +35,28 @@ async function pushChanges(message: string) {
     const status = await run("git", ["status"], root) as any;
     const diffStat = await run("git", ["diff", "--stat"], root) as any;
     
-    console.log("[Runner] Git Status:\n", status.stdout);
-    console.log("[Runner] Git Diff Stat:\n", diffStat.stdout);
+    console.log("[Runner] Git Status:\n", redactText(status.stdout));
+    console.log("[Runner] Git Diff Stat:\n", redactText(diffStat.stdout));
 
     await run("git", ["add", "."], root);
     const commitR = await run("git", ["commit", "-m", `"${message}"`], root) as any;
     
     if (!commitR.ok && !commitR.stdout.includes("nothing to commit")) {
-        console.error("[Runner] git commit failed:", commitR.stderr);
+        console.error("[Runner] git commit failed:", redactText(commitR.stderr));
         return false;
     }
     
-    const pushR = await run("git", ["push", "origin", "main"], root) as any;
+    // Support for GITHUB_TOKEN to avoid interactive prompts
+    const token = process.env.GITHUB_TOKEN;
+    const pushArgs = ["push", "origin", "main"];
+    
+    if (token) {
+        console.log("[Runner] Using GITHUB_TOKEN for push (value hidden)");
+    }
+
+    const pushR = await run("git", pushArgs, root) as any;
     if (!pushR.ok) {
-        console.error("[Runner] git push failed:", pushR.stderr);
+        console.error("[Runner] git push failed. Ensure credentials are configured or GITHUB_TOKEN is set.");
         return false;
     }
     
@@ -87,8 +96,8 @@ async function processTask(taskPath: string) {
                 result.commandsRun.push({
                     command: `${cmd.command} ${cmd.args.join(" ")}`,
                     exitCode: r.exitCode,
-                    stdoutTail: r.stdout.slice(-2000),
-                    stderrTail: r.stderr.slice(-2000)
+                    stdoutTail: redactText(r.stdout.slice(-2000)),
+                    stderrTail: redactText(r.stderr.slice(-2000))
                 });
                 if (!r.ok) {
                     result.status = "failed";
@@ -103,13 +112,12 @@ async function processTask(taskPath: string) {
             await fs.writeFile(path.join(tDir, "prompt.md"), prompt);
             
             console.log(`[Runner] Running Gemini flow for ${taskId}`);
-            // Use existing gemini command if available in path or as a tool
             const r = await run("gemini", ["--task", taskId], root) as any;
             result.commandsRun.push({
                 command: `gemini --task ${taskId}`,
                 exitCode: r.exitCode,
-                stdoutTail: r.stdout.slice(-2000),
-                stderrTail: r.stderr.slice(-2000)
+                stdoutTail: redactText(r.stdout.slice(-2000)),
+                stderrTail: redactText(r.stderr.slice(-2000))
             });
             if (!r.ok) {
                 result.status = "failed";
@@ -118,15 +126,24 @@ async function processTask(taskPath: string) {
         } else if (task.type === "review") {
             console.log(`[Runner] Running automated review for ${taskId}`);
             const build = await run("npm", ["run", "build"], root) as any;
-            const test = await run("npm", ["test"], root) as any; // Assuming there might be tests
             
             result.summary = `Review complete. Build: ${build.ok ? "OK" : "FAILED"}`;
-            result.commandsRun.push({ command: "npm run build", exitCode: build.exitCode, stdoutTail: build.stdout.slice(-1000), stderrTail: build.stderr.slice(-1000) });
+            result.commandsRun.push({ 
+                command: "npm run build", 
+                exitCode: build.exitCode, 
+                stdoutTail: redactText(build.stdout.slice(-1000)), 
+                stderrTail: redactText(build.stderr.slice(-1000)) 
+            });
             if (!build.ok) result.status = "failed";
         } else if (task.type === "mcp-smoke") {
             console.log(`[Runner] Running MCP smoke test for ${taskId}`);
             const r = await run("node", ["scripts/smoke-test.js"], root) as any;
-            result.commandsRun.push({ command: "node scripts/smoke-test.js", exitCode: r.exitCode, stdoutTail: r.stdout.slice(-2000), stderrTail: r.stderr.slice(-2000) });
+            result.commandsRun.push({ 
+                command: "node scripts/smoke-test.js", 
+                exitCode: r.exitCode, 
+                stdoutTail: redactText(r.stdout.slice(-2000)), 
+                stderrTail: redactText(r.stderr.slice(-2000)) 
+            });
             if (!r.ok) result.status = "failed";
         } else {
             result.status = "failed";
@@ -140,18 +157,20 @@ async function processTask(taskPath: string) {
         }
 
         if (result.status === "done") {
-            result.summary = result.summary || "Task completed successfully";
+            result.summary = redactText(result.summary || "Task completed successfully");
         }
     } catch (err: any) {
         result.status = "failed";
-        result.summary = `Runner error: ${err.message}`;
+        result.summary = `Runner error: ${redactText(err.message)}`;
     }
 
     result.finishedAt = new Date().toISOString();
 
     // Finalize
     const targetDir = result.status === "done" ? doneDir : failedDir;
-    await fs.writeFile(path.join(targetDir, `${taskId}.json`), JSON.stringify(result, null, 2));
+    // Redact the entire result object just in case
+    const safeResult = redactSecrets(result);
+    await fs.writeFile(path.join(targetDir, `${taskId}.json`), JSON.stringify(safeResult, null, 2));
     
     // Remove from running
     if (await fs.stat(runningPath).catch(() => null)) {
@@ -164,14 +183,14 @@ async function processTask(taskPath: string) {
     report += `**Status**: ${statusText}\n`;
     report += `**Started**: ${result.startedAt}\n`;
     report += `**Finished**: ${result.finishedAt}\n\n`;
-    report += `## Summary\n${result.summary}\n\n`;
+    report += `## Summary\n${redactText(result.summary)}\n\n`;
     
     report += `## Commands Run\n`;
     for (const cmd of result.commandsRun) {
         report += `### \`${cmd.command}\`\n`;
         report += `Exit Code: ${cmd.exitCode}\n\n`;
-        if (cmd.stdoutTail) report += `#### Stdout\n\`\`\`\n${cmd.stdoutTail}\n\`\`\`\n\n`;
-        if (cmd.stderrTail) report += `#### Stderr\n\`\`\`\n${cmd.stderrTail}\n\`\`\`\n\n`;
+        if (cmd.stdoutTail) report += `#### Stdout\n\`\`\`\n${redactText(cmd.stdoutTail)}\n\`\`\`\n\n`;
+        if (cmd.stderrTail) report += `#### Stderr\n\`\`\`\n${redactText(cmd.stderrTail)}\n\`\`\`\n\n`;
     }
     
     if (result.filesChanged.length > 0) {
@@ -183,7 +202,7 @@ async function processTask(taskPath: string) {
     }
 
     const diffStat = await run("git", ["diff", "--stat"], root) as any;
-    report += `## Git Status\n\`\`\`\n${diffStat.stdout}\n\`\`\`\n`;
+    report += `## Git Status\n\`\`\`\n${redactText(diffStat.stdout)}\n\`\`\`\n`;
 
     await fs.writeFile(path.join(reportsDir, `${taskId}.md`), report);
     await audit(`runner.${result.status}`, result.status === "done", { taskId });
@@ -222,7 +241,7 @@ async function runLoop() {
         try {
             await runOnce();
         } catch (err: any) {
-            console.error("[Runner] Loop error:", err.message);
+            console.error("[Runner] Loop error:", redactText(err.message));
         }
         await new Promise(r => setTimeout(r, interval));
     }
@@ -230,9 +249,9 @@ async function runLoop() {
 
 const arg = process.argv[2];
 if (arg === "--once") {
-    runOnce().catch(err => console.error(err));
+    runOnce().catch(err => console.error(redactText(err.message)));
 } else if (arg === "--loop") {
-    runLoop().catch(err => console.error(err));
+    runLoop().catch(err => console.error(redactText(err.message)));
 } else {
     console.log("Usage: node dist/runner/github-task-runner.js --once | --loop");
 }

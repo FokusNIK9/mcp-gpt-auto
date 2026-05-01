@@ -13,7 +13,8 @@
     "dev": "tsx src/index.ts",
     "check": "tsc -p tsconfig.json --noEmit",
     "runner:once": "node dist/runner/github-task-runner.js --once",
-    "runner:loop": "node dist/runner/github-task-runner.js --loop"
+    "runner:loop": "node dist/runner/github-task-runner.js --loop",
+    "test:redaction": "node scripts/test-redaction.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

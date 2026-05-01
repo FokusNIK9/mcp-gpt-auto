@@ -4,6 +4,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { out, audit, rel, taskDir, run } from "../../gateway/utils.js";
 import { root } from "../../gateway/config.js";
+import { redactText } from "../../gateway/redact.js";
 
 export function registerReviewTools(server: McpServer)
 {
@@ -15,7 +16,7 @@ export function registerReviewTools(server: McpServer)
 		const status = await run("git", ["status", "--short"], root) as any;
 		const diff = await run("git", ["diff"], root) as any;
 		const stdout = await fs.readFile(path.join(dir, "result", "subagent-stdout.txt"), "utf8").catch(() => "");
-		const bundle = `# Review ${taskId}\n\n## Git status\n\`\`\`\n${status.stdout}\n\`\`\`\n\n## Subagent stdout\n\`\`\`\n${stdout}\n\`\`\`\n\n## Diff\n\`\`\`diff\n${diff.stdout}\n\`\`\`\n`;
+		const bundle = `# Review ${taskId}\n\n## Git status\n\`\`\`\n${redactText(status.stdout)}\n\`\`\`\n\n## Subagent stdout\n\`\`\`\n${redactText(stdout)}\n\`\`\`\n\n## Diff\n\`\`\`diff\n${redactText(diff.stdout)}\n\`\`\`\n`;
 		await fs.writeFile(path.join(reviewDir, "review-bundle.md"), bundle);
 		await audit("review.bundle", true, { taskId });
 		return out({ ok: true, path: rel(path.join(reviewDir, "review-bundle.md")) });
@@ -69,7 +70,7 @@ export function registerReviewTools(server: McpServer)
 
 		await fs.writeFile(path.join(reviewDir, "review-result.json"), JSON.stringify(result, null, 2));
 
-		const report = `# Review Report: ${taskId}\n\nStatus: ${statusText}\nDecision: ${decision}\n\n## Issues\n${issues.length ? issues.map(i => `- [${i.severity}] ${i.message}`).join("\n") : "None"}\n\n## Git Status\n\`\`\`\n${status.stdout}\n\`\`\`\n\n## Diff Stat\n\`\`\`\n${stat.stdout}\n\`\`\`\n`;
+		const report = `# Review Report: ${taskId}\n\nStatus: ${statusText}\nDecision: ${decision}\n\n## Issues\n${issues.length ? issues.map(i => `- [${i.severity}] ${i.message}`).join("\n") : "None"}\n\n## Git Status\n\`\`\`\n${redactText(status.stdout)}\n\`\`\`\n\n## Diff Stat\n\`\`\`\n${redactText(stat.stdout)}\n\`\`\`\n`;
 		await fs.writeFile(path.join(reviewDir, "review.md"), report);
 
 		await audit("review.run", true, { taskId, status: statusText });

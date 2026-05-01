@@ -148,10 +148,19 @@ set CONFIRM_PUSH=YES
 scripts\win\05-push-to-github.bat "commit message"
 ```
 
+## Security and Secrets
+
+Проект включает автоматическую систему фильтрации секретов (Secret Redaction). Токены GitHub, ключи API и пароли автоматически заменяются на `[REDACTED]` в отчётах и логах.
+
+Подробнее см. [`docs/security-redaction.md`](docs/security-redaction.md).
+
+**Важно:** Никогда не копируйте реальные токены в чат или в файлы `prompt.md`.
+
 ## Документы
 
 - [`docs/agentic-mcp-plan.md`](docs/agentic-mcp-plan.md) — общий план полного агентного режима.
-- [`docs/mvp-self-improving-agent-plan.md`](docs/mvp-self-improving-agent-plan.md) — пошаговый рабочий MVP.
+- [`docs/security-redaction.md`](docs/security-redaction.md) — система фильтрации секретов.
+- [`docs/github-task-runner.md`](docs/github-task-runner.md) — документация раннера задач.
 - [`docs/subagent-contract.md`](docs/subagent-contract.md) — формат задач и ответов саб-агента.
 - [`docs/security-policy.md`](docs/security-policy.md) — политика безопасности.
 - [`docs/operator-workflow.md`](docs/operator-workflow.md) — как управлять циклом из чата.

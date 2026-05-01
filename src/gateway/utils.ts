@@ -2,16 +2,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { root, agent, allowed, blocked } from "./config.js";
+import { redactSecrets } from "./redact.js";
 
 export function out(data: unknown)
 {
-	return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+	const redacted = redactSecrets(data);
+	return { content: [{ type: "text" as const, text: JSON.stringify(redacted, null, 2) }] };
 }
 
 export async function audit(tool: string, ok: boolean, data: unknown = null)
 {
+	const redactedData = redactSecrets(data);
 	await fs.mkdir(path.join(agent, "logs"), { recursive: true });
-	await fs.appendFile(path.join(agent, "logs", "audit.jsonl"), `${JSON.stringify({ ts: new Date().toISOString(), tool, ok, data })}\n`);
+	await fs.appendFile(path.join(agent, "logs", "audit.jsonl"), `${JSON.stringify({ ts: new Date().toISOString(), tool, ok, data: redactedData })}\n`);
 }
 
 export function safe(p: string)
