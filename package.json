@@ -14,10 +14,14 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "runner:once": "node dist/runner/github-task-runner.js --once",
     "runner:loop": "node dist/runner/github-task-runner.js --loop",
-    "test:redaction": "node scripts/test-redaction.js"
+    "test:redaction": "node scripts/test-redaction.js",
+    "action:bridge": "node dist/action-bridge/server.js",
+    "action:openapi": "node dist/action-bridge/openapi.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@types/express": "^5.0.6",
+    "express": "^5.2.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {

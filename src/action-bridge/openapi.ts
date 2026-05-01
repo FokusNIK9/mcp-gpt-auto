@@ -1,0 +1,196 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { root } from "../gateway/config.js";
+
+const openapi = `openapi: 3.1.0
+info:
+  title: mcp-gpt-auto Action Bridge
+  version: 0.1.0
+  description: Queue tasks for a local mcp-gpt-auto runner and read task reports.
+servers:
+  - url: http://127.0.0.1:8787
+    description: Public HTTPS tunnel to local action bridge
+security:
+  - AgentToken: []
+components:
+  securitySchemes:
+    AgentToken:
+      type: apiKey
+      in: header
+      name: X-Agent-Token
+  schemas:
+    Command:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - args
+      properties:
+        command:
+          type: string
+          enum:
+            - git
+            - node
+            - npm
+            - pnpm
+            - dotnet
+            - python
+            - py
+            - gemini
+            - powershell
+            - pwsh
+            - cmd
+        args:
+          type: array
+          items:
+            type: string
+    QueueTaskRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - title
+        - type
+        - instructions
+      properties:
+        taskId:
+          type: string
+          pattern: "^[a-zA-Z0-9._-]+$"
+        title:
+          type: string
+        type:
+          type: string
+          enum:
+            - shell
+            - gemini
+            - review
+            - mcp-smoke
+        priority:
+          type: string
+          enum:
+            - low
+            - normal
+            - high
+          default: normal
+        instructions:
+          type: string
+        commands:
+          type: array
+          items:
+            $ref: "#/components/schemas/Command"
+          default: []
+        allowedFiles:
+          type: array
+          items:
+            type: string
+        requiresPush:
+          type: boolean
+          default: true
+    BasicOk:
+      type: object
+      additionalProperties: true
+      required:
+        - ok
+      properties:
+        ok:
+          type: boolean
+paths:
+  /health:
+    get:
+      operationId: getAgentHealth
+      summary: Check local action bridge health.
+      security: []
+      responses:
+        "200":
+          description: Health response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOk"
+  /tasks:
+    post:
+      operationId: queueTask
+      summary: Queue a task for the local runner.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueueTaskRequest"
+      responses:
+        "200":
+          description: Task queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOk"
+  /tasks/{taskId}:
+    get:
+      operationId: getTaskStatus
+      summary: Get task queue status.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-zA-Z0-9._-]+$"
+      responses:
+        "200":
+          description: Task status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOk"
+  /tasks/{taskId}/report:
+    get:
+      operationId: getTaskReport
+      summary: Get task Markdown report.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-zA-Z0-9._-]+$"
+      responses:
+        "200":
+          description: Task report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOk"
+  /reports:
+    get:
+      operationId: listTaskReports
+      summary: List latest task reports.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: Latest reports.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOk"
+`;
+
+async function main() {
+  const openapiDir = path.join(root, "openapi");
+  if (!(await fs.stat(openapiDir).catch(() => null))) {
+    await fs.mkdir(openapiDir, { recursive: true });
+  }
+  
+  const outputPath = path.join(openapiDir, "gpt-action-bridge.openapi.yaml");
+  await fs.writeFile(outputPath, openapi);
+  console.log(`[OpenAPI] Generated schema at ${outputPath}`);
+}
+
+main().catch(err => console.error(err));

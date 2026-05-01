@@ -156,6 +156,19 @@ scripts\win\05-push-to-github.bat "commit message"
 
 **Важно:** Никогда не копируйте реальные токены в чат или в файлы `prompt.md`.
 
+## GPT Action Bridge
+
+The bridge allows Custom GPTs to queue tasks and read reports via HTTPS.
+
+1. Start runner loop: `scripts\win\21-run-task-runner-loop.bat`.
+2. Start bridge: `scripts\win\40-start-action-bridge.bat` (requires `ACTION_BRIDGE_TOKEN`).
+3. Expose port 8787 (e.g., via `ngrok`).
+4. Set `ACTION_BRIDGE_PUBLIC_URL` to the HTTPS tunnel URL and import `<tunnel-url>/openapi.json` into your Custom GPT Action.
+
+Only `GET /health` and `GET /openapi.json` are public. All task/report endpoints require the `X-Agent-Token` header and only write/read queue files; they do not execute shell, fs, git, or MCP calls directly.
+
+See [docs/gpt-action-bridge.md](docs/gpt-action-bridge.md) for details.
+
 ## Документы
 
 - [`docs/agentic-mcp-plan.md`](docs/agentic-mcp-plan.md) — общий план полного агентного режима.
