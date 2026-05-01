@@ -6,10 +6,11 @@ import { root } from "../gateway/config.js";
 import { redactText, redactSecrets } from "../gateway/redact.js";
 import { QueueTaskRequestSchema } from "./types.js";
 import { registerDashboardRoutes, initWebSocket, broadcast, notifyWebhook } from "./dashboard.js";
+import { registerWorkspaceRoutes, workspaceOpenApiPaths } from "./workspace.js";
 import { registerMcpSseRoutes } from "./mcp-sse.js";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = parseInt(process.env.PORT || "8787");
@@ -249,6 +250,8 @@ function buildOpenApiSchema() {
           },
         },
       },
+      // Workspace API — file-based code-agent operations
+      ...workspaceOpenApiPaths,
     },
   };
 }
@@ -559,8 +562,12 @@ app.get("/dashboard", async (req, res) => {
 // Register dashboard routes (UI, API, cancel, retry)
 registerDashboardRoutes(app);
 
+// Register workspace routes (file-based code-agent API)
+registerWorkspaceRoutes(app);
+
 // Register MCP SSE transport (for Devin / external MCP clients)
 registerMcpSseRoutes(app);
+
 
 // Create HTTP server and attach WebSocket
 const server = http.createServer(app);
