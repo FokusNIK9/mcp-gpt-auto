@@ -511,7 +511,7 @@ app.get("/dashboard", async (req, res) => {
     );
 
     const totalTasks = inbox.length + running.length + done.length + failed.length;
-    const staleCount = [...inbox, ...done, ...failed].filter(t => t.isStale).length;
+    const staleCount = [...inbox, ...running, ...done, ...failed].filter(t => t.isStale).length;
 
     res.json({
       ok: true,
