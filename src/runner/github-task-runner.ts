@@ -19,13 +19,15 @@ function gitAuthArgs(args: string[]) {
     const token = process.env.GITHUB_TOKEN;
     if (!token) return args;
 
+    const basicToken = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+
     return [
         "-c",
         "credential.helper=",
         "-c",
         "core.askPass=",
         "-c",
-        `http.extraHeader=AUTHORIZATION: bearer ${token}`,
+        `http.extraHeader=AUTHORIZATION: basic ${basicToken}`,
         ...args
     ];
 }
