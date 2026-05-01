@@ -1,0 +1,17 @@
+{
+  "taskId": "2026-05-01-smoke-runner-test",
+  "status": "done",
+  "startedAt": "2026-05-01T01:05:08.991Z",
+  "finishedAt": "2026-05-01T01:05:10.552Z",
+  "summary": "Task completed successfully",
+  "commandsRun": [
+    {
+      "command": "npm run build",
+      "exitCode": 0,
+      "stdoutTail": "\n> mcp-gpt-auto@0.1.0 build\n> tsc -p tsconfig.json\n\n",
+      "stderrTail": ""
+    }
+  ],
+  "filesChanged": [],
+  "reportPath": ".agent-queue/reports/2026-05-01-smoke-runner-test.md"
+}
