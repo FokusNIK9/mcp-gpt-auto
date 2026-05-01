@@ -1,0 +1,23 @@
+{
+  "taskId": "2026-05-01-local-e2e-001",
+  "status": "done",
+  "startedAt": "2026-05-01T01:34:07.835Z",
+  "finishedAt": "2026-05-01T01:34:09.824Z",
+  "summary": "Task completed successfully",
+  "commandsRun": [
+    {
+      "command": "npm run build",
+      "exitCode": 0,
+      "stdoutTail": "\n> mcp-gpt-auto@0.1.0 build\n> tsc -p tsconfig.json\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "npm run test:redaction",
+      "exitCode": 0,
+      "stdoutTail": "\n> mcp-gpt-auto@0.1.0 test:redaction\n> node scripts/test-redaction.js\n\n=== Redaction Test ===\nOriginal: [REDACTED]\nRedacted: [REDACTED]\nOriginal: [REDACTED]\nRedacted: [REDACTED]\nOriginal: [REDACTED]\nRedacted: [REDACTED]\nOriginal: [REDACTED]\nRedacted: [REDACTED]\nOriginal: GITHUB_TOKEN=[REDACTED]\nRedacted: GITHUB_TOKEN=[REDACTED]\nOriginal: API_KEY=[REDACTED]\nRedacted: API_KEY=[REDACTED]\nOriginal: [REDACTED]\nRedacted: [REDACTED]\nOriginal: Normal text with no secrets.\nRedacted: Normal text with no secrets.\nOriginal: Token in a sentence: My [REDACTED] is secret.\nRedacted: Token in a sentence: My [REDACTED] is secret.\n\n--- Object Redaction ---\n{\n  \"taskId\": \"test-task\",\n  \"token\": \"[REDACTED]\",\n  \"config\": {\n    \"apiKey\": \"[REDACTED]\",\n    \"nested\": [\n      \"[REDACTED]\",\n      {\n        \"secret\": \"[REDACTED]\"\n      }\n    ]\n  },\n  \"output\": \"Standard output with GITHUB_TOKEN=[REDACTED]\"\n}\n\nTests PASSED!\n",
+      "stderrTail": ""
+    }
+  ],
+  "filesChanged": [],
+  "reportPath": ".agent-queue/reports/2026-05-01-local-e2e-001.md"
+}
