@@ -1,0 +1,29 @@
+{
+  "taskId": "gpt-20260501-0002",
+  "title": "GitHub token action setup guidance",
+  "type": "shell",
+  "priority": "normal",
+  "instructions": "Provide safe guidance for configuring a GitHub Personal Access Token in a GPT Action authentication dialog. Do not use or print any token value. Mention that any exposed token should be revoked and regenerated. No file changes.",
+  "commands": [
+    {
+      "command": "git",
+      "args": [
+        "status"
+      ]
+    }
+  ],
+  "allowedFiles": [
+    "README.md",
+    "docs/**",
+    "scripts/**",
+    "src/**",
+    ".agent-queue/**",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json"
+  ],
+  "requiresPush": false,
+  "createdAt": "2026-05-01T03:03:34.482Z",
+  "createdBy": "gpt-action-bridge",
+  "workspace": "."
+}
