@@ -26,7 +26,7 @@ echo Git diff stat:
 git diff --stat
 echo.
 
-git add README.md docs scripts schemas examples .agent
+git add README.md package.json tsconfig.json src scripts docs schemas examples .agent .gitignore
 if errorlevel 1 exit /b 1
 
 git commit -m "%MESSAGE%"

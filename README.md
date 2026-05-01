@@ -53,7 +53,35 @@ git clone https://github.com/FokusNIK9/mcp-gpt-auto.git
 cd mcp-gpt-auto
 
 scripts\win\00-bootstrap.bat
-scripts\win\01-sync-from-github.bat
+scripts\win\10-install-and-build.bat
+scripts\win\11-start-mcp.bat
+```
+
+## Как подключить к MCP-клиенту
+
+Добавь в конфиг твоего MCP-клиента (например, Claude Desktop или другой):
+
+```json
+{
+  "mcpServers": {
+    "mcp-gpt-auto": {
+      "command": "node",
+      "args": [
+        "C:/Users/user/Documents/trash/Program/2026-05/01.05/mcp-gpt-auto/dist/index.js"
+      ],
+      "env": {
+        "MCP_GPT_AUTO_WORKSPACE": "C:/Users/user/Documents/trash/Program/2026-05/01.05/mcp-gpt-auto"
+      }
+    }
+  }
+}
+```
+
+*Замени пути на реальные абсолютные пути к твоей папке репозитория.*
+
+## Проверка ручного агентного цикла
+
+```bat
 scripts\win\02-new-task.bat test-task "Проверить рабочий цикл"
 scripts\win\03-run-gemini-task.bat test-task
 scripts\win\04-review-bundle.bat test-task
