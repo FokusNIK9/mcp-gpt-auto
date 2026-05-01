@@ -11,7 +11,18 @@ echo.
 
 REM --- Token ---
 if "%ACTION_BRIDGE_TOKEN%"=="" (
-  set "ACTION_BRIDGE_TOKEN=xagt-aaf4931a04f4488096f4d337a0a69e45"
+  echo ERROR: ACTION_BRIDGE_TOKEN is not set.
+  echo.
+  echo In CMD:
+  echo   set ACTION_BRIDGE_TOKEN=your-secret-token
+  echo   scripts\win\50-start-all.bat
+  echo.
+  echo In PowerShell:
+  echo   $env:ACTION_BRIDGE_TOKEN="your-secret-token"
+  echo   .\scripts\win\50-start-all.bat
+  echo.
+  pause
+  exit /b 1
 )
 
 REM --- 1. Kill old processes ---
