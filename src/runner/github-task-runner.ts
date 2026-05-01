@@ -12,10 +12,32 @@ const doneDir = path.join(queueDir, "done");
 const failedDir = path.join(queueDir, "failed");
 const reportsDir = path.join(queueDir, "reports");
 
+process.env.GIT_TERMINAL_PROMPT = "0";
+process.env.GCM_INTERACTIVE = "never";
+
+function gitAuthArgs(args: string[]) {
+    const token = process.env.GITHUB_TOKEN;
+    if (!token) return args;
+
+    return [
+        "-c",
+        "credential.helper=",
+        "-c",
+        "core.askPass=",
+        "-c",
+        `http.extraHeader=AUTHORIZATION: bearer ${token}`,
+        ...args
+    ];
+}
+
+async function runGit(args: string[]) {
+    return await run("git", gitAuthArgs(args), root) as any;
+}
+
 async function pullChanges() {
     console.log("[Runner] Pulling changes from GitHub...");
     // Use --ff-only to avoid merge conflicts in the runner
-    const r = await run("git", ["pull", "--ff-only"], root) as any;
+    const r = await runGit(["pull", "--ff-only"]);
     if (!r.ok) {
         console.error("[Runner] git pull failed:", redactText(r.stderr));
         return false;
@@ -32,14 +54,14 @@ async function pushChanges(message: string) {
     console.log(`[Runner] Pushing changes: ${message}`);
     
     // Safety: check status and diff before pushing
-    const status = await run("git", ["status"], root) as any;
-    const diffStat = await run("git", ["diff", "--stat"], root) as any;
+    const status = await runGit(["status"]);
+    const diffStat = await runGit(["diff", "--stat"]);
     
     console.log("[Runner] Git Status:\n", redactText(status.stdout));
     console.log("[Runner] Git Diff Stat:\n", redactText(diffStat.stdout));
 
-    await run("git", ["add", "."], root);
-    const commitR = await run("git", ["commit", "-m", `"${message}"`], root) as any;
+    await runGit(["add", "."]);
+    const commitR = await runGit(["commit", "-m", message]);
     
     if (!commitR.ok && !commitR.stdout.includes("nothing to commit")) {
         console.error("[Runner] git commit failed:", redactText(commitR.stderr));
@@ -54,7 +76,7 @@ async function pushChanges(message: string) {
         console.log("[Runner] Using GITHUB_TOKEN for push (value hidden)");
     }
 
-    const pushR = await run("git", pushArgs, root) as any;
+    const pushR = await runGit(pushArgs);
     if (!pushR.ok) {
         console.error("[Runner] git push failed. Ensure credentials are configured or GITHUB_TOKEN is set.");
         return false;
