@@ -1,0 +1,10 @@
+{
+  "taskId": "helper-test-002",
+  "status": "failed",
+  "startedAt": "2026-05-01T01:38:26.143Z",
+  "finishedAt": "2026-05-01T01:38:26.144Z",
+  "summary": "Runner error: cmd.args.join is not a function",
+  "commandsRun": [],
+  "filesChanged": [],
+  "reportPath": ".agent-queue/reports/helper-test-002.md"
+}
