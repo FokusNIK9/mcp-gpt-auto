@@ -1,9 +1,11 @@
 import express from "express";
+import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { root } from "../gateway/config.js";
 import { redactText, redactSecrets } from "../gateway/redact.js";
 import { QueueTaskRequestSchema } from "./types.js";
+import { registerDashboardRoutes, initWebSocket, broadcast, notifyWebhook } from "./dashboard.js";
 
 const app = express();
 app.use(express.json());
@@ -259,7 +261,10 @@ async function ensureQueueDirs() {
 }
 
 const auth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  // Public endpoints (no auth needed)
   if (req.path === "/health" || req.path === "/openapi.json") return next();
+  // Local-only dashboard endpoints (no auth — only accessible on localhost)
+  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws") return next();
   
   const providedToken = req.headers["x-agent-token"];
   if (!TOKEN) {
@@ -535,8 +540,17 @@ app.get("/dashboard", async (req, res) => {
   }
 });
 
-app.listen(PORT, HOST, () => {
+// Register dashboard routes (UI, API, cancel, retry)
+registerDashboardRoutes(app);
+
+// Create HTTP server and attach WebSocket
+const server = http.createServer(app);
+initWebSocket(server);
+
+server.listen(PORT, HOST, () => {
   console.log(`[Bridge] Action bridge listening on http://${HOST}:${PORT}`);
+  console.log(`[Bridge] Dashboard: http://${HOST}:${PORT}/ui`);
+  console.log(`[Bridge] WebSocket: ws://${HOST}:${PORT}/ws`);
   console.log(`[Bridge] OpenAPI: ${PUBLIC_URL}/openapi.json`);
   if (!TOKEN) {
     console.warn("[Bridge] WARNING: ACTION_BRIDGE_TOKEN is not set. Auth will fail.");
