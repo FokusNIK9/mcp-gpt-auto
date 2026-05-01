@@ -229,6 +229,23 @@ function buildOpenApiSchema() {
           },
         },
       },
+      "/dashboard": {
+        get: {
+          operationId: "getDashboard",
+          summary: "Task queue dashboard with stats and error analysis.",
+          description: "Returns all tasks grouped by status with report summaries and error hints for failed tasks. Marks tasks older than 3 days as stale.",
+          responses: {
+            "200": {
+              description: "Dashboard with summary counts and task details.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/BasicOk" },
+                },
+              },
+            },
+          },
+        },
+      },
     },
   };
 }
@@ -388,6 +405,133 @@ app.get("/reports", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: "Failed to list reports" });
+  }
+});
+
+app.get("/dashboard", async (req, res) => {
+  const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+
+  async function listJsonFiles(dir: string): Promise<string[]> {
+    try {
+      const files = await fs.readdir(dir);
+      return files.filter(f => f.endsWith(".json"));
+    } catch {
+      return [];
+    }
+  }
+
+  async function parseTask(dir: string, file: string) {
+    try {
+      const raw = await fs.readFile(path.join(dir, file), "utf8");
+      const data = JSON.parse(raw);
+      const stats = await fs.stat(path.join(dir, file));
+      const ageMs = now - stats.mtime.getTime();
+      return {
+        taskId: data.taskId || path.basename(file, ".json"),
+        title: data.title || "",
+        type: data.type || "unknown",
+        createdAt: data.createdAt || stats.mtime.toISOString(),
+        modifiedAt: stats.mtime.toISOString(),
+        isStale: ageMs > THREE_DAYS_MS,
+        ageDays: Math.floor(ageMs / (24 * 60 * 60 * 1000)),
+      };
+    } catch {
+      return {
+        taskId: path.basename(file, ".json"),
+        title: "(parse error)",
+        type: "unknown",
+        createdAt: "",
+        modifiedAt: "",
+        isStale: false,
+        ageDays: 0,
+      };
+    }
+  }
+
+  async function getReportSummary(taskId: string) {
+    const reportPath = path.join(reportsDir, `${taskId}.md`);
+    try {
+      const raw = await fs.readFile(reportPath, "utf8");
+      const redacted = redactText(raw);
+      const lines = redacted.split("\n");
+
+      let errorLine = "";
+      let exitCode = "";
+      for (const line of lines) {
+        const lower = line.toLowerCase();
+        if (!errorLine && (lower.includes("error") || lower.includes("fail") || lower.includes("exception"))) {
+          errorLine = line.trim().slice(0, 200);
+        }
+        const exitMatch = line.match(/exit\s*code[:\s]*(\d+)/i);
+        if (exitMatch) {
+          exitCode = exitMatch[1];
+        }
+      }
+
+      return {
+        hasReport: true,
+        lines: lines.length,
+        errorHint: errorLine || null,
+        exitCode: exitCode || null,
+        previewLines: lines.slice(0, 8).join("\n"),
+      };
+    } catch {
+      return { hasReport: false, lines: 0, errorHint: null, exitCode: null, previewLines: "" };
+    }
+  }
+
+  try {
+    await ensureQueueDirs();
+
+    const [inboxFiles, runningFiles, doneFiles, failedFiles] = await Promise.all([
+      listJsonFiles(inboxDir),
+      listJsonFiles(runningDir),
+      listJsonFiles(doneDir),
+      listJsonFiles(failedDir),
+    ]);
+
+    const inbox = await Promise.all(inboxFiles.map(f => parseTask(inboxDir, f)));
+    const running = await Promise.all(runningFiles.map(f => parseTask(runningDir, f)));
+    const done = await Promise.all(doneFiles.map(f => parseTask(doneDir, f)));
+    const failed = await Promise.all(failedFiles.map(f => parseTask(failedDir, f)));
+
+    const failedWithReports = await Promise.all(
+      failed.map(async t => ({
+        ...t,
+        report: await getReportSummary(t.taskId),
+      }))
+    );
+
+    const doneWithReports = await Promise.all(
+      done.map(async t => ({
+        ...t,
+        report: await getReportSummary(t.taskId),
+      }))
+    );
+
+    const totalTasks = inbox.length + running.length + done.length + failed.length;
+    const staleCount = [...inbox, ...done, ...failed].filter(t => t.isStale).length;
+
+    res.json({
+      ok: true,
+      summary: {
+        total: totalTasks,
+        inbox: inbox.length,
+        running: running.length,
+        done: done.length,
+        failed: failed.length,
+        stale: staleCount,
+      },
+      tasks: {
+        inbox,
+        running,
+        done: doneWithReports,
+        failed: failedWithReports,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: "Failed to build dashboard" });
   }
 });
 

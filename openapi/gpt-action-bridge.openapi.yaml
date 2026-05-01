@@ -176,3 +176,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BasicOk"
+  /dashboard:
+    get:
+      operationId: getDashboard
+      summary: Task queue dashboard with stats and error analysis.
+      description: Returns all tasks grouped by status with report summaries and error hints for failed tasks. Marks tasks older than 3 days as stale.
+      responses:
+        "200":
+          description: Dashboard with summary counts and task details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BasicOk"
