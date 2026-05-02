@@ -65,6 +65,37 @@ async function listJsonFiles(dir: string): Promise<string[]> {
   }
 }
 
+function inferTaskType(data: any, taskId: string): string {
+  // Use existing type if it's valid and not 'unknown'
+  const existingType = String(data.type || "").toLowerCase();
+  if (existingType && existingType !== "unknown" && existingType !== "undefined") {
+    return existingType;
+  }
+
+  // If there are shell commands, it's a shell task
+  if (Array.isArray(data.commands) && data.commands.length > 0) return "shell";
+  if (Array.isArray(data.commandsRun) && data.commandsRun.length > 0) return "shell";
+
+  const text = [taskId, data.title, data.instructions, data.createdBy]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (text.includes("subagent") || text.includes("sub-agent") || text.includes("gemini")) return "gemini";
+  if (text.includes("review")) return "review";
+  if (text.includes("smoke")) return "mcp-smoke";
+  if (text.includes("command") || text.includes("shell") || text.includes("test")) return "shell";
+
+  return "unknown";
+}
+
+function titleFromTaskId(taskId: string): string {
+  return taskId
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\d{8,}\b/g, "")
+    .trim();
+}
+
 async function parseTaskFile(dir: string, file: string, status: string) {
   try {
     const filePath = path.join(dir, file);
@@ -74,8 +105,8 @@ async function parseTaskFile(dir: string, file: string, status: string) {
     const ageMs = Date.now() - stats.mtime.getTime();
     return {
       taskId: data.taskId || path.basename(file, ".json"),
-      title: data.title || "",
-      type: data.type || "unknown",
+      title: data.title || titleFromTaskId(data.taskId || path.basename(file, ".json")),
+      type: inferTaskType(data, data.taskId || path.basename(file, ".json")),
       status,
       instructions: data.instructions || "",
       commands: data.commands || [],
@@ -642,7 +673,7 @@ function renderActivity(tasks) {
 
 // --- Commands Table (shell tasks) ---
 function renderCommands(tasks) {
-  const shellTasks = tasks.filter(t => t.type === 'shell' && t.commands && t.commands.length > 0);
+  const shellTasks = tasks.filter(t => t.type === 'shell' || (t.commands && t.commands.length > 0));
   if (!shellTasks.length) { document.getElementById('commands').innerHTML = '<div class="empty">No shell commands yet</div>'; return; }
   let html = '<table><tr><th>Task ID</th><th>Commands</th><th>Status</th></tr>';
   for (const t of shellTasks) {
@@ -656,7 +687,7 @@ function renderCommands(tasks) {
 
 // --- Sub-agents Table ---
 function renderSubagents(tasks) {
-  const geminiTasks = tasks.filter(t => t.type === 'gemini');
+  const geminiTasks = tasks.filter(t => t.type === 'gemini' || (t.taskId || '').toLowerCase().includes('subagent') || (t.title || '').toLowerCase().includes('subagent'));
   if (!geminiTasks.length) { document.getElementById('subagents').innerHTML = '<div class="empty">No sub-agent tasks yet</div>'; return; }
   let html = '<table><tr><th>Task ID</th><th>Instructions</th><th>Status</th><th>Actions</th></tr>';
   for (const t of geminiTasks) {

@@ -292,6 +292,12 @@ export function registerWorkspaceRoutes(app: express.Application) {
       const file = safe(p);
       const stats = await fs.stat(file);
       if (!stats.isFile()) throw new Error("Not a file");
+      
+      // Fix for "stale" files: disable caching
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      
       res.sendFile(file);
     } catch (err: any) {
       res.status(404).json({ ok: false, error: err.message });
