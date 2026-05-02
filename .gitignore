@@ -4,5 +4,7 @@ dist/
 .agent/tasks/
 .agent/logs/
 .agent/artifacts/
+.agent-workspace/
+.env
 *.local
 .DS_Store

@@ -31,6 +31,11 @@ $existingProcess = Get-NetTCPConnection -LocalPort $PORT -ErrorAction SilentlyCo
 if ($existingProcess) {
     $proc = Get-Process -Id $existingProcess.OwningProcess -ErrorAction SilentlyContinue
     if ($proc) {
+        if ($proc.Id -eq 0) {
+            Write-Warning "Port $PORT is in transient state (System Idle). Please wait a few seconds..."
+            Start-Sleep -Seconds 5
+            return # Skip the rest of the check this time
+        }
         Write-Warning "Port $PORT is already occupied by $($proc.ProcessName) (PID: $($proc.Id))"
         $choice = Read-Host "Do you want to stop this process? (y/n)"
         if ($choice -eq 'y') {
