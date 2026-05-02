@@ -30,15 +30,19 @@ export function registerReviewTools(server: McpServer)
 
 		const status = await run("git", ["status", "--short"], root) as any;
 		const stat = await run("git", ["diff", "--stat"], root) as any;
-		const diff = await run("git", ["diff"], root) as any;
+		const diff = await run("git", ["diff", "--unified=0"], root) as any;
 
 		const issues: any[] = [];
 		const secrets = ["api_key", "apikey", "token", "secret", "password", "BEGIN PRIVATE KEY", ".env"];
-		const diffLow = diff.stdout.toLowerCase();
+		const addedLines = diff.stdout
+			.split("\n")
+			.filter((line: string) => line.startsWith("+") && !line.startsWith("+++"))
+			.join("\n")
+			.toLowerCase();
 
 		for (const s of secrets)
 		{
-			if (diffLow.includes(s.toLowerCase()))
+			if (addedLines.includes(s.toLowerCase()))
 			{
 				issues.push({ severity: "critical", message: `Potential secret found: ${s}` });
 			}

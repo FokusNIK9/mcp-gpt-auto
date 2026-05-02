@@ -5,6 +5,12 @@ dist/
 .agent/logs/
 .agent/artifacts/
 .agent-workspace/
+.agent-queue/inbox/
+.agent-queue/running/
+.agent-queue/done/
+.agent-queue/failed/
+.agent-queue/reports/
 .env
 *.local
+docs/mcp-inspector-smoke-test.md
 .DS_Store

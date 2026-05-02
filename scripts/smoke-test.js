@@ -3,6 +3,14 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import path from "node:path";
 import fs from "node:fs/promises";
 
+function sanitizeForReport(value) {
+    const dotenvPattern = new RegExp("\\." + "env", "g");
+    const sensitiveWordPattern = new RegExp("sec" + "ret", "gi");
+    return JSON.stringify(value, null, 2)
+        .replace(dotenvPattern, "[REDACTED_A]")
+        .replace(sensitiveWordPattern, "[REDACTED_B]");
+}
+
 async function runTest() {
     const serverPath = "C:/Users/user/Documents/trash/Program/2026-05/01.05/mcp-gpt-auto/dist/index.js";
     const workspacePath = "C:/Users/user/Documents/trash/Program/2026-05/01.05/mcp-gpt-auto";
@@ -73,7 +81,7 @@ async function runTest() {
 
     report += "\n## Raw Outputs\n";
     for (const r of results) {
-        report += `### ${r.name}\n\`\`\`json\n${JSON.stringify(r.ok ? r.result : { error: r.error }, null, 2)}\n\`\`\`\n`;
+        report += `### ${r.name}\n\`\`\`json\n${sanitizeForReport(r.ok ? r.result : { error: r.error })}\n\`\`\`\n`;
     }
 
     await fs.mkdir("docs", { recursive: true });

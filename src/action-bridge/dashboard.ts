@@ -12,10 +12,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import http from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { root, agent, inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 import { redactText } from "../gateway/redact.js";
 
 const auditLog = path.join(agent, "logs", "audit.jsonl");
+const execFileAsync = promisify(execFile);
 
 // --- WebSocket broadcast ---
 let wss: WebSocketServer | null = null;
@@ -138,6 +141,97 @@ async function buildActivitySnapshot() {
   };
 }
 
+async function readAuditEntries(limit = 50) {
+  try {
+    const raw = await fs.readFile(auditLog, "utf8");
+    return raw.trim().split("\n")
+      .filter(l => l.length > 0)
+      .map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean)
+      .reverse()
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+async function getGitStatusSummary() {
+  try {
+    const { stdout } = await execFileAsync("git", ["status", "--short"], { cwd: root, timeout: 5000 });
+    const lines = stdout.split("\n").map(l => l.trim()).filter(Boolean);
+    return {
+      ok: true,
+      clean: lines.length === 0,
+      changed: lines.length,
+      lines: lines.slice(0, 50),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      clean: false,
+      changed: 0,
+      lines: [],
+      error: err instanceof Error ? err.message : "Failed to read git status",
+    };
+  }
+}
+
+async function buildHealthSummary() {
+  const activity = await buildActivitySnapshot();
+  const auditEntries = await readAuditEntries(25);
+  const git = await getGitStatusSummary();
+  const recentRejected = auditEntries.filter((e: any) => e?.tool === "review.run" && e?.data?.status === "rejected").length;
+  const recentFailures = auditEntries.filter((e: any) => e?.ok === false).length;
+
+  const warnings: string[] = [];
+  const recommendations: string[] = [];
+
+  if (activity.summary.failed > 0) {
+    warnings.push(`${activity.summary.failed} failed task(s) in queue`);
+    recommendations.push("Open failed task reports and retry or archive resolved failures.");
+  }
+  if (activity.summary.running > 0) {
+    recommendations.push("Watch running tasks for stale state before launching long follow-up jobs.");
+  }
+  if (activity.summary.stale > 0) {
+    warnings.push(`${activity.summary.stale} stale task(s) older than 3 days`);
+    recommendations.push("Cancel, retry, or archive stale tasks.");
+  }
+  if (recentFailures > 0) {
+    warnings.push(`${recentFailures} failed audit event(s) in recent log window`);
+    recommendations.push("Inspect /api/audit for recent tool failures.");
+  }
+  if (recentRejected > 0) {
+    warnings.push(`${recentRejected} rejected review event(s) in recent log window`);
+    recommendations.push("Check latest review.run entries and compare them with current smoke-test output.");
+  }
+  if (git.ok && !git.clean) {
+    warnings.push(`Git working tree has ${git.changed} changed item(s)`);
+    recommendations.push("Review git status before committing Dashboard 2.0 changes.");
+  }
+  if (!git.ok) {
+    warnings.push("Git status is unavailable");
+    recommendations.push("Run git status manually to verify repository state.");
+  }
+
+  const health = warnings.length === 0 ? "healthy" : (activity.summary.failed > 0 || recentFailures > 0 ? "degraded" : "warning");
+
+  return {
+    ok: true,
+    health,
+    summary: activity.summary,
+    git,
+    audit: {
+      recent: auditEntries.slice(0, 10),
+      recentFailures,
+      recentRejected,
+    },
+    warnings,
+    recommendations,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 // --- Routes ---
 
 export function registerDashboardRoutes(app: express.Application) {
@@ -145,6 +239,16 @@ export function registerDashboardRoutes(app: express.Application) {
   app.get("/ui", (_req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(DASHBOARD_HTML);
+  });
+
+  // API: Dashboard 2.0 health summary
+  app.get("/api/health-summary", async (_req, res) => {
+    try {
+      const summary = await buildHealthSummary();
+      res.json(summary);
+    } catch {
+      res.status(500).json({ ok: false, error: "Failed to build health summary" });
+    }
   });
 
   // API: activity feed
@@ -194,13 +298,7 @@ export function registerDashboardRoutes(app: express.Application) {
   app.get("/api/audit", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit as string || "50", 10), 200);
     try {
-      const raw = await fs.readFile(auditLog, "utf8");
-      const lines = raw.trim().split("\n").filter(l => l.length > 0);
-      const entries = lines
-        .map(l => { try { return JSON.parse(l); } catch { return null; } })
-        .filter(Boolean)
-        .reverse()
-        .slice(0, limit);
+      const entries = await readAuditEntries(limit);
       res.json({ ok: true, entries });
     } catch {
       res.json({ ok: true, entries: [] });
@@ -331,6 +429,26 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .stat-card.running .num { color: var(--yellow); }
   .stat-card.inbox .num { color: var(--blue); }
 
+
+  .health-panel { background: linear-gradient(135deg, rgba(88,166,255,0.10), rgba(63,185,80,0.06)); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 20px; }
+  .health-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .health-title { font-size: 15px; font-weight: 600; }
+  .health-updated { color: var(--muted); font-size: 11px; font-family: monospace; }
+  .health-grid { display: grid; grid-template-columns: minmax(160px, 0.8fr) repeat(3, minmax(120px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .health-card { background: rgba(13,17,23,0.55); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .health-card .label { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+  .health-card .value { font-size: 20px; font-weight: 700; }
+  .health-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
+  .health-badge.healthy { background: rgba(63,185,80,0.15); color: var(--green); }
+  .health-badge.warning { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .health-badge.degraded { background: rgba(248,81,73,0.15); color: var(--red); }
+  .health-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .health-list { background: rgba(13,17,23,0.35); border: 1px solid var(--border); border-radius: 10px; padding: 12px; min-height: 72px; }
+  .health-list h3 { font-size: 12px; color: var(--muted); margin-bottom: 8px; font-weight: 600; }
+  .health-list ul { margin-left: 18px; color: var(--text); font-size: 12px; line-height: 1.6; }
+  .git-lines { margin-top: 8px; font-family: monospace; font-size: 11px; color: var(--muted); max-height: 90px; overflow: auto; white-space: pre-wrap; }
+  @media (max-width: 800px) { .health-grid, .health-lists { grid-template-columns: 1fr; } }
+
   .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
   .tab { padding: 8px 16px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-size: 14px; }
   .tab:hover { color: var(--text); }
@@ -389,6 +507,15 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <div class="stats" id="stats"></div>
 
+
+  <section class="health-panel" id="healthPanel">
+    <div class="health-head">
+      <div class="health-title">Dashboard 2.0 Health</div>
+      <div class="health-updated" id="healthUpdated">loading...</div>
+    </div>
+    <div id="healthSummary"><div class="empty">Loading health summary...</div></div>
+  </section>
+
   <div class="tabs">
     <div class="tab active" data-panel="activity">Activity</div>
     <div class="tab" data-panel="commands">Commands</div>
@@ -445,6 +572,42 @@ function notify(msg, type = 'success') {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 4000);
+}
+
+
+// --- Dashboard 2.0 Health ---
+async function loadHealthSummary() {
+  try {
+    const r = await fetch(API + '/api/health-summary');
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'health summary failed');
+    renderHealthSummary(data);
+  } catch {
+    document.getElementById('healthUpdated').textContent = 'health unavailable';
+    document.getElementById('healthSummary').innerHTML = '<div class="empty">Failed to load Dashboard 2.0 health summary</div>';
+  }
+}
+
+function renderHealthSummary(data) {
+  const health = data.health || 'warning';
+  const warnings = data.warnings && data.warnings.length ? data.warnings : ['No warnings in current health window'];
+  const recommendations = data.recommendations && data.recommendations.length ? data.recommendations : ['No action needed right now'];
+  const gitLines = data.git && data.git.lines && data.git.lines.length ? data.git.lines.map(esc).join('\\n') : 'working tree clean';
+  const queue = data.summary || { total: 0, running: 0, failed: 0 };
+  const audit = data.audit || { recentRejected: 0, recentFailures: 0 };
+  document.getElementById('healthUpdated').textContent = 'updated ' + (data.updatedAt || 'now');
+  document.getElementById('healthSummary').innerHTML =
+    '<div class="health-grid">' +
+      '<div class="health-card"><div class="label">Overall</div><div class="value"><span class="health-badge ' + esc(health) + '">' + esc(health) + '</span></div></div>' +
+      '<div class="health-card"><div class="label">Queue</div><div class="value">' + queue.running + ' running</div></div>' +
+      '<div class="health-card"><div class="label">Failed tasks</div><div class="value">' + queue.failed + '</div></div>' +
+      '<div class="health-card"><div class="label">Git changes</div><div class="value">' + (data.git ? data.git.changed : '?') + '</div><div class="git-lines">' + gitLines + '</div></div>' +
+    '</div>' +
+    '<div class="health-lists">' +
+      '<div class="health-list"><h3>Warnings</h3><ul>' + warnings.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul></div>' +
+      '<div class="health-list"><h3>Recommendations</h3><ul>' + recommendations.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul></div>' +
+    '</div>' +
+    '<div class="health-updated" style="margin-top:10px">Recent audit: ' + audit.recentFailures + ' failures, ' + audit.recentRejected + ' rejected reviews</div>';
 }
 
 // --- Stats ---
@@ -591,6 +754,7 @@ function connectWs() {
         renderActivity(msg.data.tasks);
         renderCommands(msg.data.tasks);
         renderSubagents(msg.data.tasks);
+        loadHealthSummary();
       } else if (msg.type === 'cancelled') {
         notify('Task cancelled: ' + msg.taskId);
       } else if (msg.type === 'retried') {
@@ -602,10 +766,12 @@ function connectWs() {
 
 // --- Init ---
 refresh();
+loadHealthSummary();
 loadAudit();
 connectWs();
 // Fallback polling if WS fails
 setInterval(refresh, 15000);
+setInterval(loadHealthSummary, 15000);
 setInterval(loadAudit, 30000);
 </script>
 </body>
