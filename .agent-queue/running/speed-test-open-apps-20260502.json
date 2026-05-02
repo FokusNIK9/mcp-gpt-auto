@@ -1,0 +1,22 @@
+{
+  "taskId": "speed-test-open-apps-20260502",
+  "title": "Speed test: open Paint and Notepad",
+  "type": "shell",
+  "priority": "normal",
+  "instructions": "Open Microsoft Paint and Notepad on the user's Windows PC to test how quickly the runner processes a queued task. Do not modify files.",
+  "commands": [
+    {
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "Start-Process mspaint; Start-Process notepad"
+      ]
+    }
+  ],
+  "allowedFiles": [],
+  "requiresPush": false,
+  "createdAt": "2026-05-02T07:57:43.244Z",
+  "createdBy": "gpt-action-bridge",
+  "workspace": "."
+}
