@@ -66,25 +66,30 @@ async function listJsonFiles(dir: string): Promise<string[]> {
 }
 
 function inferTaskType(data: any, taskId: string): string {
-  // Use existing type if it's valid and not 'unknown'
-  const existingType = String(data.type || "").toLowerCase();
-  if (existingType && existingType !== "unknown" && existingType !== "undefined") {
-    return existingType;
+  // 1. Попытка взять готовый тип, если он есть и он вменяемый
+  const rawType = String(data.type || "").toLowerCase();
+  if (rawType && rawType !== "unknown" && rawType !== "undefined" && rawType !== "null") {
+    return rawType;
   }
 
-  // If there are shell commands, it's a shell task
-  if (Array.isArray(data.commands) && data.commands.length > 0) return "shell";
-  if (Array.isArray(data.commandsRun) && data.commandsRun.length > 0) return "shell";
+  // 2. Если типа нет, ищем признаки Shell-задачи (команды)
+  if ((data.commands && data.commands.length > 0) || (data.commandsRun && data.commandsRun.length > 0)) {
+    return "shell";
+  }
 
-  const text = [taskId, data.title, data.instructions, data.createdBy]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+  // 3. Угадываем по тексту из всех доступных полей
+  const contextText = [
+    taskId,
+    data.title,
+    data.instructions,
+    data.summary,
+    data.createdBy
+  ].filter(Boolean).join(" ").toLowerCase();
 
-  if (text.includes("subagent") || text.includes("sub-agent") || text.includes("gemini")) return "gemini";
-  if (text.includes("review")) return "review";
-  if (text.includes("smoke")) return "mcp-smoke";
-  if (text.includes("command") || text.includes("shell") || text.includes("test")) return "shell";
+  if (contextText.includes("subagent") || contextText.includes("sub-agent") || contextText.includes("gemini")) return "gemini";
+  if (contextText.includes("review")) return "review";
+  if (contextText.includes("smoke") || contextText.includes("screenshot")) return "mcp-smoke";
+  if (contextText.includes("command") || contextText.includes("shell") || contextText.includes("test")) return "shell";
 
   return "unknown";
 }
