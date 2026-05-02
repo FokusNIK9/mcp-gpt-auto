@@ -5,9 +5,9 @@
 import express from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
-import { root, agent, allowed, blocked } from "../gateway/config.js";
+import { root } from "../gateway/config.js";
 import { redactText } from "../gateway/redact.js";
+import { safe, rel, run } from "../gateway/utils.js";
 
 const workspace = path.join(root, ".agent-workspace");
 const scriptsDir = path.join(workspace, "scripts");
@@ -16,72 +16,6 @@ const tempDir = path.join(workspace, "temp");
 
 async function ensureWorkspace() {
   await Promise.all([scriptsDir, logsDir, tempDir].map(d => fs.mkdir(d, { recursive: true })));
-}
-
-/** Resolve path relative to project root, reject blocked patterns. Allows outside root for local dev. */
-function safePath(p: string): string {
-  const resolved = path.resolve(root, p);
-  const low = resolved.replaceAll("\\", "/").toLowerCase();
-  for (const b of blocked) {
-    if (low.includes(b.toLowerCase())) {
-      throw new Error(`Blocked path: ${b}`);
-    }
-  }
-  return resolved;
-}
-
-function relPath(p: string): string {
-  return path.relative(root, p).replaceAll("\\", "/");
-}
-
-/** Run a command, return stdout/stderr/exitCode — no shell escaping issues */
-function execCommand(
-  command: string,
-  args: string[],
-  cwd: string,
-  input: string,
-  timeoutMs: number,
-): Promise<{ ok: boolean; exitCode: number | null; stdout: string; stderr: string; durationMs: number; timedOut: boolean }> {
-  if (!allowed.includes(command.toLowerCase())) {
-    return Promise.resolve({ ok: false, exitCode: null, stdout: "", stderr: `Blocked command: ${command}`, durationMs: 0, timedOut: false });
-  }
-
-  const started = Date.now();
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-
-    const child = spawn(command, args, {
-      cwd,
-      windowsHide: true,
-      shell: process.platform === "win32",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, Math.min(timeoutMs, 900000));
-
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (x: string) => (stdout += x));
-    child.stderr.on("data", (x: string) => (stderr += x));
-
-    child.on("error", (e: Error) => {
-      clearTimeout(timer);
-      resolve({ ok: false, exitCode: null, stdout, stderr: stderr + e.message, durationMs: Date.now() - started, timedOut });
-    });
-
-    child.on("close", (exitCode: number | null) => {
-      clearTimeout(timer);
-      resolve({ ok: exitCode === 0 && !timedOut, exitCode, stdout, stderr, durationMs: Date.now() - started, timedOut });
-    });
-
-    if (input) child.stdin.write(input);
-    child.stdin.end();
-  });
 }
 
 export const workspaceOpenApiPaths: Record<string, unknown> = {
@@ -241,11 +175,11 @@ export function registerWorkspaceRoutes(app: express.Application) {
     try {
       const { path: p, content } = req.body;
       if (!p || content == null) return res.status(400).json({ ok: false, error: "path and content required" });
-      const file = safePath(p);
+      const file = safe(p);
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.writeFile(file, content, "utf8");
       const stats = await fs.stat(file);
-      res.json({ ok: true, path: relPath(file), size: stats.size });
+      res.json({ ok: true, path: rel(file), size: stats.size });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
@@ -255,13 +189,13 @@ export function registerWorkspaceRoutes(app: express.Application) {
     try {
       const { path: p, maxLines } = req.body;
       if (!p) return res.status(400).json({ ok: false, error: "path required" });
-      const file = safePath(p);
+      const file = safe(p);
       let text = await fs.readFile(file, "utf8");
       const totalLines = text.split("\n").length;
       if (maxLines && maxLines > 0) text = text.split("\n").slice(0, maxLines).join("\n");
       const MAX_CHARS = 100000;
       if (text.length > MAX_CHARS) text = text.slice(0, MAX_CHARS);
-      res.json({ ok: true, path: relPath(file), content: redactText(text), totalLines });
+      res.json({ ok: true, path: rel(file), content: redactText(text), totalLines });
     } catch (err: any) {
       res.status(404).json({ ok: false, error: err.message });
     }
@@ -270,12 +204,12 @@ export function registerWorkspaceRoutes(app: express.Application) {
   app.post("/workspace/patch", async (req, res) => {
     try {
       const { path: p, search, replace } = req.body;
-      const file = safePath(p);
+      const file = safe(p);
       const before = await fs.readFile(file, "utf8");
       if (!before.includes(search)) return res.status(400).json({ ok: false, error: "Search text not found" });
       const after = before.replace(search, () => replace);
       await fs.writeFile(file, after, "utf8");
-      res.json({ ok: true, path: relPath(file), replacements: 1 });
+      res.json({ ok: true, path: rel(file), replacements: 1 });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
@@ -284,10 +218,10 @@ export function registerWorkspaceRoutes(app: express.Application) {
   app.post("/workspace/list", async (req, res) => {
     try {
       const p = req.body.path || ".";
-      const dir = safePath(p);
+      const dir = safe(p);
       const entries = await fs.readdir(dir, { withFileTypes: true });
       const result = entries.map(e => ({ name: e.name, isDirectory: e.isDirectory() }));
-      res.json({ ok: true, path: relPath(dir), entries: result });
+      res.json({ ok: true, path: rel(dir), entries: result });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
@@ -297,7 +231,7 @@ export function registerWorkspaceRoutes(app: express.Application) {
     try {
       const p = req.body.path || ".";
       const maxDepth = req.body.depth || 3;
-      const dir = safePath(p);
+      const dir = safe(p);
       async function getTree(current: string, depth: number): Promise<any[]> {
         if (depth > maxDepth) return [];
         const entries = await fs.readdir(current, { withFileTypes: true });
@@ -313,7 +247,7 @@ export function registerWorkspaceRoutes(app: express.Application) {
         }
         return children;
       }
-      res.json({ ok: true, path: relPath(dir), tree: await getTree(dir, 0) });
+      res.json({ ok: true, path: rel(dir), tree: await getTree(dir, 0) });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
@@ -322,7 +256,7 @@ export function registerWorkspaceRoutes(app: express.Application) {
   app.post("/workspace/search", async (req, res) => {
     try {
       const { pattern, path: searchPath, glob, maxResults } = req.body;
-      const dir = safePath(searchPath || ".");
+      const dir = safe(searchPath || ".");
       const limit = Math.min(maxResults || 50, 200);
       const matches: any[] = [];
       const regex = new RegExp(pattern, "gi");
@@ -338,7 +272,7 @@ export function registerWorkspaceRoutes(app: express.Application) {
               const text = await fs.readFile(full, "utf8");
               const lines = text.split("\n");
               for (let i = 0; i < lines.length && matches.length < limit; i++) {
-                if (regex.test(lines[i])) matches.push({ file: relPath(full), line: i + 1, text: lines[i].trim().slice(0, 200) });
+                if (regex.test(lines[i])) matches.push({ file: rel(full), line: i + 1, text: lines[i].trim().slice(0, 200) });
               }
             } catch {}
           }
@@ -354,18 +288,12 @@ export function registerWorkspaceRoutes(app: express.Application) {
   app.get("/workspace/file", async (req, res) => {
     try {
       const p = req.query.path as string;
-      console.log(`[Bridge] GET /workspace/file?path=${p}`);
       if (!p) return res.status(400).json({ ok: false, error: "path required" });
-      const file = safePath(p);
-      console.log(`[Bridge] Resolved safe path: ${file}`);
+      const file = safe(p);
       const stats = await fs.stat(file);
       if (!stats.isFile()) throw new Error("Not a file");
-      res.sendFile(file, (err) => {
-        if (err) console.error(`[Bridge] Error sending file: ${err.message}`);
-        else console.log(`[Bridge] File sent successfully: ${file}`);
-      });
+      res.sendFile(file);
     } catch (err: any) {
-      console.error(`[Bridge] File access error: ${err.message}`);
       res.status(404).json({ ok: false, error: err.message });
     }
   });
@@ -378,14 +306,16 @@ export function registerWorkspaceRoutes(app: express.Application) {
       const logId = `run-${Date.now()}`;
       const scriptFile = path.join(scriptsDir, `${logId}.${ext}`);
       const logFile = path.join(logsDir, `${logId}.json`);
-      const workDir = safePath(cwd || ".");
+      const workDir = safe(cwd || ".");
       await fs.writeFile(scriptFile, scriptContent, "utf8");
+      
       let cmd = "powershell";
       let args = ["-ExecutionPolicy", "Bypass", "-File", scriptFile];
       if (ext === "py") { cmd = "python"; args = [scriptFile]; }
       if (ext === "js") { cmd = "node"; args = [scriptFile]; }
       if (ext === "bat") { cmd = "cmd"; args = ["/c", scriptFile]; }
-      const result = await execCommand(cmd, args, workDir, "", timeoutMs || 120000);
+      
+      const result = await run(cmd, args, workDir, "", timeoutMs || 120000) as any;
       await fs.writeFile(logFile, JSON.stringify({ logId, ...result, timestamp: new Date().toISOString() }, null, 2));
       res.json({ logId, ...result });
     } catch (err: any) {
@@ -396,8 +326,8 @@ export function registerWorkspaceRoutes(app: express.Application) {
   app.post("/workspace/exec", async (req, res) => {
     try {
       const { command, args, cwd, input, timeoutMs } = req.body;
-      const workDir = safePath(cwd || ".");
-      const result = await execCommand(command, args || [], workDir, input || "", timeoutMs || 120000);
+      const workDir = safe(cwd || ".");
+      const result = await run(command, args || [], workDir, input || "", timeoutMs || 120000) as any;
       res.json({ ...result });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
@@ -406,10 +336,11 @@ export function registerWorkspaceRoutes(app: express.Application) {
 
   app.get("/workspace/log/:logId", async (req, res) => {
     try {
-      const logFile = path.join(logsDir, `${req.params.logId}.json`);
+      const logFile = path.join(logsDir, `${(req.params as any).logId}.json`);
       const data = JSON.parse(await fs.readFile(logFile, "utf8"));
       res.json({ ok: true, ...data });
     } catch {
+
       res.status(404).json({ ok: false, error: "Log not found" });
     }
   });

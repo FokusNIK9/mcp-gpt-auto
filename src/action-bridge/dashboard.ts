@@ -12,15 +12,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import http from "node:http";
-import { root, agent } from "../gateway/config.js";
+import { root, agent, inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 import { redactText } from "../gateway/redact.js";
 
-const queueDir = path.join(root, ".agent-queue");
-const inboxDir = path.join(queueDir, "inbox");
-const runningDir = path.join(queueDir, "running");
-const doneDir = path.join(queueDir, "done");
-const failedDir = path.join(queueDir, "failed");
-const reportsDir = path.join(queueDir, "reports");
 const auditLog = path.join(agent, "logs", "audit.jsonl");
 
 // --- WebSocket broadcast ---

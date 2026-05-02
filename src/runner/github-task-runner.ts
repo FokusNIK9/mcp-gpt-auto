@@ -2,15 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { TaskFile, TaskResult } from "./task-types.js";
 import { run, audit, rel, taskDir } from "../gateway/utils.js";
-import { root } from "../gateway/config.js";
+import { root, inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 import { redactText, redactSecrets } from "../gateway/redact.js";
-
-const queueDir = path.join(root, ".agent-queue");
-const inboxDir = path.join(queueDir, "inbox");
-const runningDir = path.join(queueDir, "running");
-const doneDir = path.join(queueDir, "done");
-const failedDir = path.join(queueDir, "failed");
-const reportsDir = path.join(queueDir, "reports");
 
 process.env.GIT_TERMINAL_PROMPT = "0";
 process.env.GCM_INTERACTIVE = "never";
