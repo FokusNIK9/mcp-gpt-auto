@@ -387,7 +387,7 @@ export function registerWorkspaceRoutes(app: express.Application) {
       if (ext === "bat") { cmd = "cmd"; args = ["/c", scriptFile]; }
       const result = await execCommand(cmd, args, workDir, "", timeoutMs || 120000);
       await fs.writeFile(logFile, JSON.stringify({ logId, ...result, timestamp: new Date().toISOString() }, null, 2));
-      res.json({ ok: result.ok, logId, ...result });
+      res.json({ logId, ...result });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
@@ -398,7 +398,7 @@ export function registerWorkspaceRoutes(app: express.Application) {
       const { command, args, cwd, input, timeoutMs } = req.body;
       const workDir = safePath(cwd || ".");
       const result = await execCommand(command, args || [], workDir, input || "", timeoutMs || 120000);
-      res.json({ ok: result.ok, ...result });
+      res.json({ ...result });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }

@@ -4,10 +4,16 @@ import path from "node:path";
 import fs from "node:fs/promises";
 
 async function runTest() {
+    const serverPath = "C:/Users/user/Documents/trash/Program/2026-05/01.05/mcp-gpt-auto/dist/index.js";
+    const workspacePath = "C:/Users/user/Documents/trash/Program/2026-05/01.05/mcp-gpt-auto";
+    
+    console.log(`Starting MCP server at: ${serverPath}`);
+    console.log(`Workspace: ${workspacePath}`);
+
     const transport = new StdioClientTransport({
         command: "node",
-        args: [path.resolve("dist/index.js")],
-        env: { ...process.env, MCP_GPT_AUTO_WORKSPACE: process.cwd() }
+        args: [serverPath],
+        env: { ...process.env, MCP_GPT_AUTO_WORKSPACE: workspacePath }
     });
 
     const client = new Client({

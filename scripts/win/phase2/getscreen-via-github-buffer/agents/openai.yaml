@@ -1,0 +1,3 @@
+interface:
+  display_name: "Getscreen Via GitHub Buffer"
+  short_description: "Capture, publish, freshness-check, and analyze screenshots only after real PNG loading."

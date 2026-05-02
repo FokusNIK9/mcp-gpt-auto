@@ -7,34 +7,41 @@ import { root, agent } from "../../gateway/config.js";
 
 export function registerDesktopTools(server: McpServer)
 {
-	server.tool("desktop.screenshot", "Take Windows screenshot.", {}, async () =>
-	{
-		const screenshotsDir = path.join(agent, "artifacts", "screenshots");
-		await fs.mkdir(screenshotsDir, { recursive: true });
-		const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-		const fileName = `${timestamp}.png`;
-		const filePath = path.join(screenshotsDir, fileName);
+	server.tool(
+		"desktop.screenshot",
+		"Capture, validate, and publish a screenshot to GitHub (Version 2.0.0 protocol). " +
+		"MANDATORY: For visual analysis, you MUST open the 'publish.commit_raw_url' as an image. " +
+		"Do NOT analyze 'latest-screenshot.png' as it is mutable. " +
+		"Set 'analysis.ok=true' ONLY after opening the immutable commit-pinned URL.",
+		{
+			publish: z.boolean().default(true).describe("Whether to commit and push to GitHub to get a raw URL for visual analysis.")
+		},
+		async ({ publish }) => {
+			const scriptPath = path.join(root, "scripts", "win", "phase2", "getscreen-via-github-buffer", "scripts", "capture_and_validate_screenshot.py");
+			const args = [scriptPath];
+			if (publish) {
+				args.push("--publish");
+			}
 
-		const psScript = `
-			Add-Type -AssemblyName System.Windows.Forms
-			Add-Type -AssemblyName System.Drawing
-			$screen = [System.Windows.Forms.Screen]::PrimaryScreen
-			$top    = $screen.Bounds.Top
-			$left   = $screen.Bounds.Left
-			$width  = $screen.Bounds.Width
-			$height = $screen.Bounds.Height
-			$bmp    = New-Object System.Drawing.Bitmap $width, $height
-			$graphics = [System.Drawing.Graphics]::FromImage($bmp)
-			$graphics.CopyFromScreen($left, $top, 0, 0, $bmp.Size)
-			$bmp.Save("${filePath.replaceAll("\\", "\\\\")}", [System.Drawing.Imaging.ImageFormat]::Png)
-			$graphics.Dispose()
-			$bmp.Dispose()
-		`;
+			// We use the 'run' utility from gateway/utils.ts
+			const r = await run("python", args, root) as any;
+			
+			let result;
+			try {
+				result = JSON.parse(r.stdout);
+			} catch (e) {
+				result = { ok: false, error: "Failed to parse script output", stdout: r.stdout, stderr: r.stderr };
+			}
 
-		const r = await run("powershell", ["-Command", psScript], root);
-		await audit("desktop.screenshot", Boolean((r as any).ok), { path: rel(filePath) });
-		return out({ ok: (r as any).ok, path: rel(filePath), error: (r as any).stderr });
-	});
+			await audit("desktop.screenshot", result.capture?.ok || false, { 
+				publish, 
+				commit_sha: result.publish?.commit_sha,
+				url: result.publish?.commit_raw_url 
+			});
+
+			return out(result);
+		}
+	);
 
 	server.tool("desktop.active_window", "Get active window title.", {}, async () =>
 	{
