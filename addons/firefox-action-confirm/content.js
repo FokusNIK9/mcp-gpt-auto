@@ -1,10 +1,14 @@
 (() => {
   "use strict";
+  console.log("[Local Dev Agent] content.js STARTING...");
 
   const ALLOWED_DIALOG_TEXT = [
     "heroism-petri-causal.ngrok-free.dev",
     "heroism_petri_causal_ngrok_free_dev__jit_plugin.queueTask",
-    "Local Dev Agent"
+    "Local Dev Agent",
+    "mcp-gpt-auto",
+    "127.0.0.1:8787",
+    "localhost:8787"
   ];
 
   const CONFIRM_TEXT = new Set([
@@ -20,28 +24,39 @@
   const TEXT_STORAGE_KEY = "localDevAgentCustomText";
   const INTERVAL_STORAGE_KEY = "localDevAgentSendInterval";
   const TIMESTAMP_STORAGE_KEY = "localDevAgentUseTimestamp";
-  const ATTACHMENTS_STORAGE_KEY = "localDevAgentAttachments";
   const TAG_STORAGE_KEY = "localDevAgentTag";
   const USE_ID_STORAGE_KEY = "localDevAgentUseId";
   const SKIP_READY_STORAGE_KEY = "localDevAgentSkipReady";
+  const SYNC_BRIDGE_STORAGE_KEY = "localDevAgentSyncBridge";
+  const BRIDGE_PATHS_STORAGE_KEY = "localDevAgentBridgePaths";
+  const CONFIRM_ONLY_STORAGE_KEY = "localDevAgentConfirmOnly"; // NEW
 
   let enabled = window.localStorage.getItem(STORAGE_KEY) !== "false";
   let customText = window.localStorage.getItem(TEXT_STORAGE_KEY) || "текст текст";
   let sendIntervalMin = parseFloat(window.localStorage.getItem(INTERVAL_STORAGE_KEY) || "1");
   let useTimestamp = window.localStorage.getItem(TIMESTAMP_STORAGE_KEY) === "true";
-  let attachmentPaths = window.localStorage.getItem(ATTACHMENTS_STORAGE_KEY) || "";
   let tagText = window.localStorage.getItem(TAG_STORAGE_KEY) || "";
   let useUniqueId = window.localStorage.getItem(USE_ID_STORAGE_KEY) === "true";
   let skipReadyCheck = window.localStorage.getItem(SKIP_READY_STORAGE_KEY) === "true";
+  let syncFromBridge = window.localStorage.getItem(SYNC_BRIDGE_STORAGE_KEY) === "true";
+  let bridgePaths = window.localStorage.getItem(BRIDGE_PATHS_STORAGE_KEY) || "text.txt";
+  let confirmOnly = window.localStorage.getItem(CONFIRM_ONLY_STORAGE_KEY) === "true"; // NEW
+
+  let isSending = false;
+  let selectedFiles = []; 
 
   let uiContainer = null;
   let toggleButton = null;
+  let confirmOnlyToggle = null; // NEW
+  let settingsPanel = null;
   let textInput = null;
   let intervalInput = null;
   let tagInput = null;
   let idToggle = null;
   let timestampToggle = null;
   let skipReadyToggle = null;
+  let syncToggle = null;
+  let bridgePathsInput = null;
   let attachmentsInput = null;
   let progressBar = null;
   let countdownLabel = null;
@@ -52,6 +67,7 @@
   let tickTimer = 0;
 
   function visible(element) {
+    if (!element) return false;
     const rect = element.getBoundingClientRect();
     const style = window.getComputedStyle(element);
     return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
@@ -67,16 +83,17 @@
   }
 
   function hasAllowedToolCall(scope) {
+    if (!scope) return false;
     const text = scope.textContent || "";
     return ALLOWED_DIALOG_TEXT.some(needle => text.includes(needle));
   }
 
   function findDialogScope(button) {
     let node = button;
-    for (let depth = 0; node && depth < 8; depth += 1) {
+    for (let depth = 0; node && depth < 10; depth += 1) {
       if (node.getAttribute?.("role") === "dialog") return node;
       const text = node.textContent || "";
-      if (text.includes("Local Dev Agent") || text.includes("Вызов инструмента")) return node;
+      if (text.includes("Local Dev Agent") || text.includes("Вызов инструмента") || text.includes("Action Bridge")) return node;
       node = node.parentElement;
     }
     return button.closest("main") || document.body;
@@ -87,26 +104,24 @@
     scanTimer = window.setTimeout(() => {
       scanTimer = 0;
       scanAndClick();
-    }, 300);
+    }, 500);
   }
 
   function scanAndClick() {
-    if (!enabled) return;
+    // If confirmOnly is ON, we ignore the main 'enabled' toggle for clicking buttons
+    if (!enabled && !confirmOnly) return;
 
     const buttons = Array.from(document.querySelectorAll("button"));
-
     for (const button of buttons) {
       if (!(button instanceof HTMLButtonElement)) continue;
       if (button.dataset.localDevAgentConfirmClicked === "true") continue;
       if (button.disabled || !visible(button) || !isConfirmButton(button)) continue;
-
       const scope = findDialogScope(button);
       if (!hasAllowedToolCall(scope)) continue;
-
       button.dataset.localDevAgentConfirmClicked = "true";
       window.setTimeout(() => {
         if (!button.disabled && visible(button)) {
-          console.info("[Local Dev Agent Confirm Guard] Confirming allowlisted tool call.");
+          console.info("[Local Dev Agent] MATCH! Confirming allowlisted tool call.");
           button.click();
         }
       }, CLICK_DELAY_MS);
@@ -126,33 +141,28 @@
     }
   }
 
-  function tick() {
-    if (!enabled) {
-      stopTick();
-      return;
-    }
-
+  async function tick() {
+    if (!enabled || isSending) return;
     const now = Date.now();
     const remainingMs = nextSendTime - now;
 
     if (remainingMs <= 0) {
-      const isReady = skipReadyCheck || isChatGPTReady();
-      if (isReady) {
-        console.info("[Local Dev Agent] Timer expired. Sending message.");
-        const success = performAutomatedSend();
-        if (success) {
-          resetTimer();
-          if (statusLabel) statusLabel.textContent = "Status: Sent OK";
-        } else {
-          if (statusLabel) statusLabel.textContent = "Status: Send Error (Retrying)";
+      const readyObj = isChatGPTReadyDetailed();
+      if (skipReadyCheck || readyObj.ready) {
+        console.info("[Local Dev Agent] Timer expired. Attempting send.");
+        resetTimer(); 
+        const success = await performAutomatedSend();
+        if (!success) {
+           console.warn("[Local Dev Agent] Send could not be initiated.");
+           if (statusLabel) statusLabel.textContent = "Status: Initiation failed";
         }
       } else {
-        if (statusLabel) statusLabel.textContent = "Status: Waiting (Busy/No Btn)";
+        if (statusLabel) statusLabel.textContent = `Status: Waiting (${readyObj.reason})`;
       }
       return;
     }
 
-    if (statusLabel && statusLabel.textContent.startsWith("Status: Waiting")) {
+    if (statusLabel && (statusLabel.textContent.startsWith("Status: Waiting") || statusLabel.textContent === "Status: Sent OK")) {
        statusLabel.textContent = "Status: Idle";
     }
     updateProgressUI(remainingMs);
@@ -165,56 +175,81 @@
 
   function updateProgressUI(remainingMs) {
     if (!progressBar || !countdownLabel) return;
-
     const totalMs = Math.max(0.1, sendIntervalMin) * 60 * 1000;
     const progress = Math.max(0, Math.min(1, remainingMs / totalMs));
-
     const seconds = Math.ceil(remainingMs / 1000);
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     countdownLabel.textContent = `Next send in: ${m}:${s.toString().padStart(2, "0")}`;
-
     progressBar.style.height = `${progress * 100}%`;
     const hue = progress * 120;
     progressBar.style.background = `hsl(${hue}, 70%, 50%)`;
   }
 
-  function generateShortId() {
-    const firstChar = (tagText || "A")[0].toLowerCase();
-    const randomPart = Math.random().toString(36).substring(2, 5);
-    return `${firstChar}${randomPart}`;
+  async function fetchFileProxy(url) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: "FETCH_FILE", url: url }, (response) => {
+        if (!response) {
+           reject(new Error("No response from background script"));
+           return;
+        }
+        if (response.ok) {
+           fetch(response.data)
+             .then(res => res.blob())
+             .then(blob => resolve(blob))
+             .catch(e => reject(e));
+        } else {
+           reject(new Error(response.error));
+        }
+      });
+    });
   }
 
-  function performAutomatedSend() {
-    let prefixes = [];
+  async function fetchBridgeFiles() {
+    if (!syncFromBridge || !bridgePaths) return [];
+    const paths = bridgePaths.split(",").map(p => p.trim()).filter(p => p.length > 0);
+    if (statusLabel) statusLabel.textContent = "Status: Fetching...";
     
-    if (tagText.trim()) {
-      prefixes.push(`[${tagText.trim()}]`);
-    }
+    const fetchPromises = paths.map(async (p) => {
+       try {
+          const url = `http://127.0.0.1:8787/workspace/file?path=${encodeURIComponent(p)}`;
+          const blob = await fetchFileProxy(url);
+          const filename = p.split(/[/\\]/).pop() || "synced_file";
+          return new File([blob], filename, { type: blob.type || "text/plain" });
+       } catch (e) {
+          console.error(`[Local Dev Agent] Proxy fetch failed for ${p}:`, e);
+          return null;
+       }
+    });
 
-    if (useUniqueId) {
-      prefixes.push(`{#${generateShortId()}}`);
-    }
+    const results = await Promise.all(fetchPromises);
+    return results.filter(f => f !== null);
+  }
 
+  async function performAutomatedSend() {
+    if (isSending) return false;
+    let prefixes = [];
+    if (tagText.trim()) prefixes.push(`[${tagText.trim()}]`);
+    if (useUniqueId) prefixes.push(`{#${generateShortId()}}`);
     if (useTimestamp) {
       const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       prefixes.push(`(${timeStr})`);
     }
-
     let finalMsg = prefixes.join(" ") + (prefixes.length ? " " : "") + customText;
 
-    if (attachmentPaths.trim()) {
-      finalMsg += `\n\nAttachments:\n${attachmentPaths}`;
+    let filesToSend = [...selectedFiles];
+    if (syncFromBridge) {
+       const remoteFiles = await fetchBridgeFiles();
+       filesToSend = [...filesToSend, ...remoteFiles];
     }
 
-    return sendMessageToChat(finalMsg);
+    return sendMessageToChat(finalMsg, filesToSend);
   }
 
   function setEnabled(nextEnabled) {
     enabled = nextEnabled;
     window.localStorage.setItem(STORAGE_KEY, String(enabled));
     updateUI();
-
     if (enabled) {
       resetTimer();
       startTick();
@@ -224,31 +259,77 @@
     }
   }
 
+  function setConfirmOnly(nextVal) {
+    confirmOnly = nextVal;
+    window.localStorage.setItem(CONFIRM_ONLY_STORAGE_KEY, String(confirmOnly));
+    updateUI();
+    if (confirmOnly) scheduleScan();
+  }
+
   function updateUI() {
     if (!toggleButton) return;
-
     toggleButton.textContent = enabled ? "Agent Auto: ON" : "Agent Auto: OFF";
     toggleButton.style.background = enabled ? "#10a37f" : "#3a3a3a";
     toggleButton.style.borderColor = enabled ? "#38d9b4" : "#666";
+
+    if (confirmOnlyToggle) {
+       confirmOnlyToggle.textContent = confirmOnly ? "Accept: ON" : "Accept: OFF";
+       confirmOnlyToggle.style.background = confirmOnly ? "#10a37f" : "#3a3a3a";
+       confirmOnlyToggle.style.borderColor = confirmOnly ? "#38d9b4" : "#666";
+    }
 
     if (textInput) textInput.value = customText;
     if (intervalInput) intervalInput.value = sendIntervalMin;
     if (tagInput) tagInput.value = tagText;
     if (idToggle) idToggle.checked = useUniqueId;
     if (timestampToggle) timestampToggle.checked = useTimestamp;
-    if (attachmentsInput) attachmentsInput.value = attachmentPaths;
     if (skipReadyToggle) skipReadyToggle.checked = skipReadyCheck;
+    if (syncToggle) syncToggle.checked = syncFromBridge;
+    if (bridgePathsInput) bridgePathsInput.value = bridgePaths;
 
     if (!enabled) {
       if (countdownLabel) countdownLabel.textContent = "Auto Mode: OFF";
       if (progressBar) progressBar.style.height = "0%";
       if (statusLabel) statusLabel.textContent = "Status: Disabled";
+    } else {
+       if (statusLabel && (statusLabel.textContent === "Status: Disabled" || statusLabel.textContent === "Status: Idle")) {
+          statusLabel.textContent = "Status: Idle";
+       }
     }
+    updateAttachmentsUI();
+  }
+
+  function updateAttachmentsUI() {
+     if (!attachmentsInput) return;
+     attachmentsInput.innerHTML = "";
+     if (selectedFiles.length === 0) {
+        const placeholder = document.createElement("div");
+        placeholder.textContent = "No files...";
+        attachmentsInput.appendChild(placeholder);
+        return;
+     }
+     selectedFiles.forEach((file, index) => {
+        const item = document.createElement("div");
+        item.style.display = "flex";
+        item.style.justifyContent = "space-between";
+        const name = document.createElement("span");
+        name.textContent = file.name;
+        const remove = document.createElement("span");
+        remove.textContent = " \u2715";
+        remove.style.cursor = "pointer";
+        remove.style.color = "#ff4d4d";
+        remove.addEventListener("click", () => {
+           selectedFiles.splice(index, 1);
+           updateAttachmentsUI();
+        });
+        item.appendChild(name);
+        item.appendChild(remove);
+        attachmentsInput.appendChild(item);
+     });
   }
 
   function installUI() {
     if (document.getElementById("local-dev-agent-ui-container")) return;
-
     uiContainer = document.createElement("div");
     uiContainer.id = "local-dev-agent-ui-container";
     uiContainer.style.position = "fixed";
@@ -261,7 +342,6 @@
     uiContainer.style.borderRadius = "12px";
     uiContainer.style.color = "#fff";
     uiContainer.style.font = "12px system-ui, sans-serif";
-    uiContainer.style.boxShadow = "0 8px 32px rgba(0,0,0,.4)";
     uiContainer.style.display = "flex";
     uiContainer.style.flexDirection = "column";
     uiContainer.style.gap = "6px";
@@ -274,15 +354,12 @@
     barContainer.style.bottom = "12px";
     barContainer.style.width = "6px";
     barContainer.style.background = "#1a1a1a";
-    barContainer.style.borderRadius = "3px";
-    barContainer.style.overflow = "hidden";
-    barContainer.style.display = "flex";
-    barContainer.style.flexDirection = "column-reverse";
     uiContainer.appendChild(barContainer);
 
     progressBar = document.createElement("div");
     progressBar.style.width = "100%";
     progressBar.style.height = "100%";
+    progressBar.style.background = "#10a37f";
     progressBar.style.transition = "height 1s linear, background 1s linear";
     barContainer.appendChild(progressBar);
 
@@ -299,365 +376,299 @@
     statusLabel.textContent = "Status: Idle";
     uiContainer.appendChild(statusLabel);
 
-    // ACTION BUTTONS ROW
     const actionButtonsRow = document.createElement("div");
     actionButtonsRow.style.display = "flex";
     actionButtonsRow.style.gap = "4px";
 
     toggleButton = document.createElement("button");
     toggleButton.type = "button";
-    toggleButton.style.flex = "2";
+    toggleButton.style.flex = "4";
     toggleButton.style.padding = "6px";
-    toggleButton.style.border = "1px solid";
+    toggleButton.style.border = "1px solid #666";
     toggleButton.style.borderRadius = "6px";
     toggleButton.style.color = "#fff";
-    toggleButton.style.fontWeight = "600";
     toggleButton.style.cursor = "pointer";
     toggleButton.addEventListener("click", () => setEnabled(!enabled));
     actionButtonsRow.appendChild(toggleButton);
 
+    // NEW: Accept All Buttons Toggle
+    confirmOnlyToggle = document.createElement("button");
+    confirmOnlyToggle.type = "button";
+    confirmOnlyToggle.style.flex = "3";
+    confirmOnlyToggle.style.padding = "6px";
+    confirmOnlyToggle.style.border = "1px solid #666";
+    confirmOnlyToggle.style.borderRadius = "6px";
+    confirmOnlyToggle.style.color = "#fff";
+    confirmOnlyToggle.style.cursor = "pointer";
+    confirmOnlyToggle.title = "Auto-confirm tool calls even when Auto-timer is OFF";
+    confirmOnlyToggle.addEventListener("click", () => setConfirmOnly(!confirmOnly));
+    actionButtonsRow.appendChild(confirmOnlyToggle);
+
+    const settingsToggleBtn = document.createElement("button");
+    settingsToggleBtn.type = "button";
+    settingsToggleBtn.textContent = "\u2699";
+    settingsToggleBtn.style.flex = "1";
+    settingsToggleBtn.style.background = "#3e414e";
+    settingsToggleBtn.style.border = "1px solid #666";
+    settingsToggleBtn.style.borderRadius = "6px";
+    settingsToggleBtn.style.color = "#fff";
+    settingsToggleBtn.style.cursor = "pointer";
+    settingsToggleBtn.addEventListener("click", () => {
+       const isHidden = settingsPanel.style.display === "none";
+       settingsPanel.style.display = isHidden ? "flex" : "none";
+    });
+    actionButtonsRow.appendChild(settingsToggleBtn);
+
     const manualSendBtn = document.createElement("button");
     manualSendBtn.type = "button";
-    manualSendBtn.textContent = "\u27A4"; // Send icon
-    manualSendBtn.title = "Send Now (Manual Trigger)";
+    manualSendBtn.textContent = "\u27A4";
     manualSendBtn.style.flex = "1";
     manualSendBtn.style.background = "#3e414e";
     manualSendBtn.style.border = "1px solid #666";
     manualSendBtn.style.borderRadius = "6px";
     manualSendBtn.style.color = "#fff";
     manualSendBtn.style.cursor = "pointer";
-    manualSendBtn.addEventListener("click", () => {
-      console.info("[Local Dev Agent] Manual send triggered.");
-      performAutomatedSend();
+    manualSendBtn.addEventListener("click", async () => {
+      if (statusLabel) statusLabel.textContent = "Status: Manual trigger...";
+      await performAutomatedSend();
     });
     actionButtonsRow.appendChild(manualSendBtn);
-
     uiContainer.appendChild(actionButtonsRow);
 
-    // DEBUG OPTIONS HEADER
-    const debugHeader = document.createElement("div");
-    debugHeader.textContent = "Debug / Format Options:";
-    debugHeader.style.fontSize = "10px";
-    debugHeader.style.color = "#888";
-    debugHeader.style.marginTop = "4px";
-    uiContainer.appendChild(debugHeader);
+    settingsPanel = document.createElement("div");
+    settingsPanel.style.display = "none";
+    settingsPanel.style.flexDirection = "column";
+    settingsPanel.style.gap = "6px";
+    settingsPanel.style.borderTop = "1px solid #444";
+    settingsPanel.style.paddingTop = "6px";
+    uiContainer.appendChild(settingsPanel);
 
-    const configRow = document.createElement("div");
-    configRow.style.display = "flex";
-    configRow.style.gap = "8px";
-    configRow.style.flexWrap = "wrap";
+    const createToggle = (label, current, callback) => {
+       const l = document.createElement("label");
+       l.style.display = "flex";
+       l.style.alignItems = "center";
+       l.style.gap = "4px";
+       l.style.cursor = "pointer";
+       const i = document.createElement("input");
+       i.type = "checkbox";
+       i.checked = current;
+       i.addEventListener("change", (e) => callback(e.target.checked));
+       l.appendChild(i);
+       l.appendChild(document.createTextNode(label));
+       return { label: l, input: i };
+    };
 
-    const tsLabel = document.createElement("label");
-    tsLabel.style.display = "flex";
-    tsLabel.style.alignItems = "center";
-    tsLabel.style.gap = "4px";
-    tsLabel.style.cursor = "pointer";
-    timestampToggle = document.createElement("input");
-    timestampToggle.type = "checkbox";
-    timestampToggle.checked = useTimestamp;
-    timestampToggle.addEventListener("change", (e) => {
-      useTimestamp = e.target.checked;
-      window.localStorage.setItem(TIMESTAMP_STORAGE_KEY, String(useTimestamp));
-    });
-    tsLabel.appendChild(timestampToggle);
-    tsLabel.appendChild(document.createTextNode("Time"));
-    configRow.appendChild(tsLabel);
+    const ts = createToggle("Time", useTimestamp, (v) => { useTimestamp = v; window.localStorage.setItem(TIMESTAMP_STORAGE_KEY, String(v)); });
+    timestampToggle = ts.input;
+    settingsPanel.appendChild(ts.label);
 
-    const idLabel = document.createElement("label");
-    idLabel.style.display = "flex";
-    idLabel.style.alignItems = "center";
-    idLabel.style.gap = "4px";
-    idLabel.style.cursor = "pointer";
-    idToggle = document.createElement("input");
-    idToggle.type = "checkbox";
-    idToggle.checked = useUniqueId;
-    idToggle.addEventListener("change", (e) => {
-      useUniqueId = e.target.checked;
-      window.localStorage.setItem(USE_ID_STORAGE_KEY, String(useUniqueId));
-    });
-    idLabel.appendChild(idToggle);
-    idLabel.appendChild(document.createTextNode("Short ID"));
-    configRow.appendChild(idLabel);
+    const sid = createToggle("Short ID", useUniqueId, (v) => { useUniqueId = v; window.localStorage.setItem(USE_ID_STORAGE_KEY, String(v)); });
+    idToggle = sid.input;
+    settingsPanel.appendChild(sid.label);
 
-    const skipLabel = document.createElement("label");
-    skipLabel.style.display = "flex";
-    skipLabel.style.alignItems = "center";
-    skipLabel.style.gap = "4px";
-    skipLabel.style.cursor = "pointer";
-    skipLabel.style.color = "#ff9b9b"; // Reddish to indicate danger
-    skipReadyToggle = document.createElement("input");
-    skipReadyToggle.type = "checkbox";
-    skipReadyToggle.checked = skipReadyCheck;
-    skipReadyToggle.addEventListener("change", (e) => {
-      skipReadyCheck = e.target.checked;
-      window.localStorage.setItem(SKIP_READY_STORAGE_KEY, String(skipReadyCheck));
-    });
-    skipLabel.appendChild(skipReadyToggle);
-    skipLabel.appendChild(document.createTextNode("Skip Ready Check"));
-    configRow.appendChild(skipLabel);
+    const skp = createToggle("Skip Check", skipReadyCheck, (v) => { skipReadyCheck = v; window.localStorage.setItem(SKIP_READY_STORAGE_KEY, String(v)); });
+    skp.label.style.color = "#ff9b9b";
+    skipReadyToggle = skp.input;
+    settingsPanel.appendChild(skp.label);
 
-    uiContainer.appendChild(configRow);
-
-    const tagRow = document.createElement("div");
-    tagRow.style.display = "flex";
-    tagRow.style.alignItems = "center";
-    tagRow.style.gap = "6px";
-    tagRow.appendChild(document.createTextNode("Tag:"));
     tagInput = document.createElement("input");
     tagInput.type = "text";
-    tagInput.placeholder = "e.g. GPT";
+    tagInput.placeholder = "Tag (e.g. GPT)";
     tagInput.value = tagText;
-    tagInput.style.flex = "1";
     tagInput.style.background = "#1a1a1a";
-    tagInput.style.border = "1px solid #555";
-    tagInput.style.borderRadius = "4px";
     tagInput.style.color = "#fff";
-    tagInput.style.padding = "2px 6px";
-    tagInput.addEventListener("input", (e) => {
-      tagText = e.target.value;
-      window.localStorage.setItem(TAG_STORAGE_KEY, tagText);
-    });
-    tagRow.appendChild(tagInput);
-    uiContainer.appendChild(tagRow);
+    tagInput.addEventListener("input", (e) => { tagText = e.target.value; window.localStorage.setItem(TAG_STORAGE_KEY, tagText); });
+    settingsPanel.appendChild(tagInput);
 
-    const labelText = document.createElement("label");
-    labelText.textContent = "Custom Text:";
-    labelText.style.fontWeight = "600";
-    uiContainer.appendChild(labelText);
+    const syncBox = createToggle("Sync from Bridge", syncFromBridge, (v) => { syncFromBridge = v; window.localStorage.setItem(SYNC_BRIDGE_STORAGE_KEY, String(v)); });
+    syncBox.label.style.color = "#38d9b4";
+    syncToggle = syncBox.input;
+    settingsPanel.appendChild(syncBox.label);
+
+    bridgePathsInput = document.createElement("input");
+    bridgePathsInput.type = "text";
+    bridgePathsInput.value = bridgePaths;
+    bridgePathsInput.style.background = "#1a1a1a";
+    bridgePathsInput.style.color = "#fff";
+    bridgePathsInput.addEventListener("input", (e) => { bridgePaths = e.target.value; window.localStorage.setItem(BRIDGE_PATHS_STORAGE_KEY, bridgePaths); });
+    settingsPanel.appendChild(bridgePathsInput);
 
     textInput = document.createElement("input");
     textInput.type = "text";
     textInput.value = customText;
     textInput.style.background = "#1a1a1a";
-    textInput.style.border = "1px solid #555";
-    textInput.style.borderRadius = "4px";
     textInput.style.color = "#fff";
-    textInput.style.padding = "4px 8px";
-    textInput.addEventListener("input", (e) => {
-      customText = e.target.value;
-      window.localStorage.setItem(TEXT_STORAGE_KEY, customText);
-    });
+    textInput.addEventListener("input", (e) => { customText = e.target.value; window.localStorage.setItem(TEXT_STORAGE_KEY, customText); });
     uiContainer.appendChild(textInput);
 
     const attachHeader = document.createElement("div");
     attachHeader.style.display = "flex";
     attachHeader.style.justifyContent = "space-between";
-    attachHeader.style.alignItems = "center";
-    attachHeader.style.fontWeight = "600";
     attachHeader.textContent = "Attachments:";
-    
     const paperclip = document.createElement("span");
     paperclip.textContent = "\uD83D\uDCCE";
     paperclip.style.cursor = "pointer";
-    paperclip.style.fontSize = "16px";
-    paperclip.title = "Select files";
-    
+    paperclip.addEventListener("click", () => hiddenFile.click());
     const hiddenFile = document.createElement("input");
     hiddenFile.type = "file";
     hiddenFile.multiple = true;
     hiddenFile.style.display = "none";
     hiddenFile.addEventListener("change", (e) => {
-      const files = Array.from(e.target.files).map(f => f.name).join(", ");
-      if (files) {
-        attachmentPaths = (attachmentPaths ? attachmentPaths + "\n" : "") + files;
-        attachmentsInput.value = attachmentPaths;
-        window.localStorage.setItem(ATTACHMENTS_STORAGE_KEY, attachmentPaths);
-      }
+       const files = Array.from(e.target.files).filter(f => f.size > 0);
+       selectedFiles = [...selectedFiles, ...files];
+       updateAttachmentsUI();
     });
-    
-    paperclip.addEventListener("click", () => hiddenFile.click());
     attachHeader.appendChild(paperclip);
     uiContainer.appendChild(attachHeader);
 
-    attachmentsInput = document.createElement("textarea");
-    attachmentsInput.rows = 2;
-    attachmentsInput.value = attachmentPaths;
-    attachmentsInput.placeholder = "File names or paths...";
+    attachmentsInput = document.createElement("div");
+    attachmentsInput.style.minHeight = "20px";
+    attachmentsInput.style.maxHeight = "60px";
+    attachmentsInput.style.overflowY = "auto";
     attachmentsInput.style.background = "#1a1a1a";
-    attachmentsInput.style.border = "1px solid #555";
-    attachmentsInput.style.borderRadius = "4px";
-    attachmentsInput.style.color = "#fff";
-    attachmentsInput.style.padding = "4px 8px";
-    attachmentsInput.style.resize = "vertical";
-    attachmentsInput.addEventListener("input", (e) => {
-      attachmentPaths = e.target.value;
-      window.localStorage.setItem(ATTACHMENTS_STORAGE_KEY, attachmentPaths);
-    });
     uiContainer.appendChild(attachmentsInput);
-
-    const labelInterval = document.createElement("label");
-    labelInterval.textContent = "Interval (min):";
-    labelInterval.style.fontWeight = "600";
-    uiContainer.appendChild(labelInterval);
 
     intervalInput = document.createElement("input");
     intervalInput.type = "number";
-    intervalInput.min = "0.1";
     intervalInput.step = "0.1";
     intervalInput.value = sendIntervalMin;
     intervalInput.style.background = "#1a1a1a";
-    intervalInput.style.border = "1px solid #555";
-    intervalInput.style.borderRadius = "4px";
     intervalInput.style.color = "#fff";
-    intervalInput.style.padding = "4px 8px";
     intervalInput.addEventListener("input", (e) => {
-      sendIntervalMin = parseFloat(e.target.value) || 0.1;
-      window.localStorage.setItem(INTERVAL_STORAGE_KEY, String(sendIntervalMin));
-      if (enabled) resetTimer();
+       sendIntervalMin = parseFloat(e.target.value) || 0.1;
+       window.localStorage.setItem(INTERVAL_STORAGE_KEY, String(sendIntervalMin));
+       if (enabled) resetTimer();
     });
     uiContainer.appendChild(intervalInput);
 
-    document.documentElement.appendChild(uiContainer);
+    document.body.appendChild(uiContainer);
     updateUI();
+    if (enabled) { resetTimer(); startTick(); }
+  }
 
-    if (enabled) {
-      resetTimer();
-      startTick();
-    }
+  function generateShortId() {
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let res = "";
+    for(let i=0; i<4; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
+    return res;
   }
 
   function setNativeValue(element, value) {
-    const proto = element instanceof HTMLTextAreaElement
-      ? HTMLTextAreaElement.prototype
-      : HTMLInputElement.prototype;
+    const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
-    if (descriptor?.set) {
-      descriptor.set.call(element, value);
-    } else {
-      element.value = value;
-    }
+    if (descriptor?.set) descriptor.set.call(element, value);
+    else element.value = value;
   }
 
   function findComposer() {
-    const candidates = Array.from(document.querySelectorAll([
-      "textarea",
-      "[contenteditable='true'][id='prompt-textarea']",
-      "[contenteditable='true'][role='textbox']",
-      "[contenteditable='true']"
-    ].join(",")));
+    const selectors = ["textarea", "#prompt-textarea", "[contenteditable='true'][role='textbox']"];
+    for (const sel of selectors) {
+       const el = document.querySelector(sel);
+       if (el && visible(el) && !el.closest("#local-dev-agent-ui-container")) return el;
+    }
+    return null;
+  }
 
-    return candidates.find(element => {
-      if (!(element instanceof HTMLElement)) return false;
-      if (element.id === "local-dev-agent-ui-container" || element.closest("#local-dev-agent-ui-container")) return false;
-      return visible(element);
-    }) || null;
+  function findSendButton(checkDisabled = true) {
+    const selectors = ["button[data-testid*='send-button']", "button[aria-label*='Send']", "button[aria-label*='Отправ']", "form button[type='submit']"];
+    for (const sel of selectors) {
+       const btn = document.querySelector(sel);
+       if (btn && visible(btn)) {
+          if (checkDisabled && (btn instanceof HTMLButtonElement) && btn.disabled) continue;
+          return btn;
+       }
+    }
+    return null;
+  }
+
+  function isChatGPTReadyDetailed() {
+    const stopBtn = document.querySelector('button[aria-label*="Stop"], button[title*="Stop"], [class*="stop-button"], [data-testid*="stop"]');
+    if (stopBtn && visible(stopBtn)) return { ready: false, reason: "Busy (Stop Btn)" };
+    const composer = findComposer();
+    if (!composer) return { ready: false, reason: "No Composer" };
+    return { ready: true, reason: "" };
+  }
+
+  function uploadFilesToChatGPT(files) {
+     const fileInput = document.querySelector('input[type="file"][multiple], input[type="file"]');
+     if (!fileInput) return;
+     const dataTransfer = new DataTransfer();
+     files.forEach(f => dataTransfer.items.add(f));
+     fileInput.files = dataTransfer.files;
+     fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function sendMessageToChat(text, files = []) {
+    if (isSending) return false;
+    const composer = findComposer();
+    if (!composer) return false;
+    isSending = true;
+    try {
+      insertText(composer, ""); 
+      if (files.length > 0) {
+         uploadFilesToChatGPT(files);
+         if (statusLabel) statusLabel.textContent = "Status: Uploading...";
+      }
+      insertText(composer, text);
+      const checkAndClick = (attempts) => {
+         const stopBtn = document.querySelector('button[aria-label*="Stop"], button[title*="Stop"], [data-testid*="stop"]');
+         if (stopBtn && visible(stopBtn)) {
+            if (statusLabel) statusLabel.textContent = "Status: Waiting for ChatGPT...";
+            window.setTimeout(() => checkAndClick(attempts), 1000);
+            return;
+         }
+         if (attempts <= 0) {
+            const enter = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true });
+            composer.dispatchEvent(enter);
+            selectedFiles = [];
+            updateAttachmentsUI();
+            if (statusLabel) statusLabel.textContent = "Status: Sent (Enter)";
+            isSending = false;
+            return;
+         }
+         const sendBtn = findSendButton(true);
+         if (sendBtn) {
+            sendBtn.click();
+            selectedFiles = [];
+            updateAttachmentsUI();
+            if (statusLabel) statusLabel.textContent = "Status: Sent OK";
+            isSending = false;
+         } else {
+            if (statusLabel) statusLabel.textContent = `Status: Processing (${attempts})...`;
+            window.setTimeout(() => checkAndClick(attempts - 1), 1000);
+         }
+      };
+      window.setTimeout(() => checkAndClick(10), 1000);
+      return true;
+    } catch (e) {
+      isSending = false;
+      if (statusLabel) statusLabel.textContent = "Status: Error";
+      return false;
+    }
   }
 
   function insertText(element, text) {
     element.focus();
-
     if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
       setNativeValue(element, text);
       element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
       element.dispatchEvent(new Event("change", { bubbles: true }));
       return;
     }
-
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(element);
     selection?.removeAllRanges();
     selection?.addRange(range);
-
     document.execCommand("insertText", false, text);
     element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
   }
 
-  function findSendButton(checkDisabled = true) {
-    // Priority 1: data-testid (including fruitjuice and other variants)
-    const testid = document.querySelector("button[data-testid$='send-button'], [data-testid*='send-button']");
-    if (testid instanceof HTMLElement && visible(testid)) {
-       if (!checkDisabled || (testid instanceof HTMLButtonElement && !testid.disabled)) return testid;
-    }
-
-    // Priority 2: Broad selectors
-    const selectors = [
-      "button[aria-label*='Send']",
-      "button[aria-label*='Отправ']",
-      "button[title*='Send']",
-      "button[title*='Отправ']",
-      "div[data-testid*='send-button'] button",
-      "form button[type='submit']",
-      "[data-testid$='send-button']",
-      ".sandbox-send-button"
-    ];
-
-    for (const selector of selectors) {
-      const btn = document.querySelector(selector);
-      if (btn instanceof HTMLElement && visible(btn)) {
-        if (checkDisabled && (btn instanceof HTMLButtonElement) && btn.disabled) continue;
-
-        const label = (btn.getAttribute("aria-label") || btn.title || btn.textContent || "").toLowerCase();
-        if (label.includes("stop") || label.includes("остан")) continue;
-        return btn;
-      }
-    }
-
-    return null;
-  }
-
-  function isChatGPTReady() {
-    const isGenerating = !!document.querySelector('button[aria-label*="Stop"], button[title*="Stop"], button[data-testid*="stop"], [class*="stop-button"], [id*="stop-button"]');
-    
-    // CRITICAL FIX: pass false to findSendButton so we don't stall when the button is disabled because of empty input
-    const sendBtn = findSendButton(false); 
-    const composer = findComposer();
-
-    if (isGenerating) console.debug("[Local Dev Agent] Ready check: ChatGPT is generating.");
-    if (!sendBtn) console.debug("[Local Dev Agent] Ready check: No send button structure found.");
-    if (!composer) console.debug("[Local Dev Agent] Ready check: No composer found.");
-
-    return !!sendBtn && !!composer && !isGenerating;
-  }
-
-  function sendMessageToChat(text) {
-    const composer = findComposer();
-    if (!composer) {
-      console.error("[Local Dev Agent] Failed to send: Composer not found.");
-      return false;
-    }
-
-    try {
-      console.info("[Local Dev Agent] Inserting text into composer.");
-      insertText(composer, text);
-
-      // Wait a bit for UI to react
-      window.setTimeout(() => {
-        const sendButton = findSendButton(true);
-        if (sendButton) {
-          console.info("[Local Dev Agent] Clicking send button.");
-          sendButton.click();
-        } else {
-          console.warn("[Local Dev Agent] Send button not ready/found, trying Enter key fallback.");
-          // Fallback: Press Enter on the composer
-          const enterEvent = new KeyboardEvent("keydown", {
-            key: "Enter",
-            code: "Enter",
-            keyCode: 13,
-            which: 13,
-            bubbles: true,
-            cancelable: true
-          });
-          composer.dispatchEvent(enterEvent);
-        }
-      }, 600);
-      return true;
-    } catch (e) {
-      console.error("[Local Dev Agent] Error during send:", e);
-      return false;
-    }
-  }
-
-  const observer = new MutationObserver((mutations) => {
+  const observer = new MutationObserver(() => {
     scheduleScan();
-    if (!document.getElementById("local-dev-agent-ui-container")) {
-      installUI();
-    }
+    if (!document.getElementById("local-dev-agent-ui-container") && document.body) installUI();
   });
-
-  observer.observe(document.documentElement, { childList: true, subtree: true });
-
-  installUI();
+  if (document.body) { observer.observe(document.body, { childList: true, subtree: true }); installUI(); }
+  else { window.addEventListener("DOMContentLoaded", () => { observer.observe(document.body, { childList: true, subtree: true }); installUI(); }); }
   window.setInterval(scanAndClick, SCAN_INTERVAL_MS);
-  scanAndClick();
 })();

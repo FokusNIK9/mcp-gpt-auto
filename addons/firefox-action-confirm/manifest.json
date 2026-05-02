@@ -1,8 +1,17 @@
 {
   "manifest_version": 2,
   "name": "Local Dev Agent Confirm Guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Auto-confirms only allowlisted Local Dev Agent tool calls in ChatGPT.",
+  "permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "http://127.0.0.1:8787/*",
+    "http://localhost:8787/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
   "content_scripts": [
     {
       "matches": [

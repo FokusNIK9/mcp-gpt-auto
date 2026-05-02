@@ -12,6 +12,17 @@ import { registerMcpSseRoutes } from "./mcp-sse.js";
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
+// CORS middleware for browser addon
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, X-Agent-Token");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = parseInt(process.env.PORT || "8787");
 const TOKEN = process.env.ACTION_BRIDGE_TOKEN;
@@ -272,10 +283,10 @@ function isLocalRequest(req: express.Request): boolean {
 const auth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   // Public endpoints (no auth needed)
   if (req.path === "/health" || req.path === "/openapi.json") return next();
-  // Dashboard endpoints — local access only (blocked through ngrok/tunnels)
-  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws") {
+  // Dashboard & Local Sync endpoints — local access only
+  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file") {
     if (isLocalRequest(req)) return next();
-    return res.status(403).json({ ok: false, error: "Dashboard is only accessible from localhost" });
+    return res.status(403).json({ ok: false, error: "This endpoint is only accessible from localhost" });
   }
   
   // Accept token from X-Agent-Token header or Authorization: Bearer header

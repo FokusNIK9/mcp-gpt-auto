@@ -1,20 +1,46 @@
-# Local Dev Agent Confirm Guard
+# Local Dev Agent - Firefox Companion
 
-Firefox WebExtension that auto-confirms only allowlisted ChatGPT tool-call dialogs for the local Action Bridge.
+Мощный компаньон для ChatGPT, который автоматизирует рутинные действия при работе с локальным Action Bridge.
 
-It does not click every `Confirm` / `Подтвердить` button. It clicks only when the dialog text contains one of:
+## Основные функции
 
-- `heroism-petri-causal.ngrok-free.dev`
-- `heroism_petri_causal_ngrok_free_dev__jit_plugin.queueTask`
-- `Local Dev Agent`
+1.  **Confirm Guard (Авто-подтверждение):**
+    *   Автоматически нажимает кнопку "Confirm" / "Allow" / "Подтвердить" для вызовов инструментов.
+    *   **Безопасность:** Кликает только в диалогах, содержащих ваш ngrok URL или метку "Local Dev Agent". Не трогает сторонние запросы.
+2.  **Auto Mode (Авто-кликер):**
+    *   Отправка сообщений в чат по таймеру (интервал настраивается от 0.1 мин).
+    *   Поддержка префиксов: Теги (например, `[GPT]`), короткие уникальные ID (для отслеживания цепочек) и время отправки.
+3.  **Bridge Sync (Динамические файлы):**
+    *   Автоматическое получение и прикрепление файла с вашего ПК перед каждой отправкой.
+    *   Работает через локальный сервер: `http://localhost:8787/workspace/file?path=text.txt`.
+4.  **Умная проверка:**
+    *   Аддон ждет завершения генерации ответа ChatGPT перед тем, как отправить следующее сообщение (защита от "захлебывания" чата).
+    *   Можно принудительно пропустить проверку готовности (галочка "Skip Check").
 
-## Install Temporarily In Firefox
+## Установка (Временная)
 
-1. Open `about:debugging#/runtime/this-firefox`.
-2. Click `Load Temporary Add-on...`.
-3. Select `manifest.json` from this folder.
-4. Keep the tab/browser session open. Temporary add-ons are removed when Firefox restarts.
+Так как аддон является инструментом разработки, он устанавливается как временное расширение:
 
-## Test
+1.  Откройте Firefox и перейдите на страницу `about:debugging#/runtime/this-firefox`.
+2.  Нажмите кнопку **"Load Temporary Add-on..."** (Загрузить временное дополнение).
+3.  Выберите файл `manifest.json` в папке `addons/firefox-action-confirm/`.
+4.  **Важно:** Временные аддоны удаляются при перезапуске браузера. При новом запуске повторите процедуру.
 
-Open ChatGPT and trigger a Local Dev Agent tool call. The extension should click `Подтвердить` only for the allowlisted Action Bridge dialog.
+## Как пользоваться
+
+### Панель управления (справа внизу)
+*   **Agent Auto (ON/OFF):** Главный выключатель таймера авто-отправки.
+*   **Иконка ⚙️:** Открывает расширенные настройки (Теги, Sync, ID, Таймштампы).
+*   **Иконка 📎:** Позволяет вручную выбрать файлы для разовой отправки.
+*   **Иконка ➤:** Немедленная отправка сообщения с текущими настройками (Manual Trigger).
+
+### Настройка синхронизации файлов
+Чтобы ChatGPT всегда видел актуальный контекст с вашего ПК:
+1.  Убедитесь, что ваш сервер `mcp-gpt-auto` запущен.
+2.  Нажмите на шестеренку `⚙️`.
+3.  Включите галочку **"Sync from Bridge"**.
+4.  В поле URL оставьте стандартное: `http://localhost:8787/workspace/file?path=text.txt`.
+5.  Теперь при каждом цикле таймера аддон будет брать содержимое `text.txt` из корня проекта и загружать его в чат.
+
+## Безопасность
+Аддон работает только на доменах `chatgpt.com`. Он не собирает данные и общается только с вашим локальным сервером на порту 8787. Белый список для авто-подтверждения жестко зашит в `content.js` (ALLOWED_DIALOG_TEXT).

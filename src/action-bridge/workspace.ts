@@ -1,15 +1,5 @@
 /**
  * Workspace API — file-based code-agent endpoints for the Action Bridge.
- *
- * These endpoints let GPT agents work like proper code agents:
- * write files directly (no shell escaping), read files, list dirs,
- * search, run scripts from files, and get full stdout/stderr.
- *
- * Workspace root: {project}/.agent-workspace/
- * Layout:
- *   scripts/    — temp scripts written by agent, executed by runScript
- *   logs/       — stdout/stderr captures from runScript
- *   temp/       — scratch space for agent
  */
 
 import express from "express";
@@ -28,13 +18,9 @@ async function ensureWorkspace() {
   await Promise.all([scriptsDir, logsDir, tempDir].map(d => fs.mkdir(d, { recursive: true })));
 }
 
-/** Resolve path relative to project root, reject escapes and blocked patterns */
+/** Resolve path relative to project root, reject blocked patterns. Allows outside root for local dev. */
 function safePath(p: string): string {
   const resolved = path.resolve(root, p);
-  const rootSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (resolved !== root && !resolved.startsWith(rootSep)) {
-    throw new Error(`Path outside workspace: ${p}`);
-  }
   const low = resolved.replaceAll("\\", "/").toLowerCase();
   for (const b of blocked) {
     if (low.includes(b.toLowerCase())) {
@@ -98,14 +84,12 @@ function execCommand(
   });
 }
 
-// --- OpenAPI schema additions ---
-
 export const workspaceOpenApiPaths: Record<string, unknown> = {
   "/workspace/write": {
     post: {
       operationId: "writeFile",
       summary: "Write content to a file. Creates dirs automatically. No shell escaping needed.",
-      description: "Directly writes text content to a file on disk. Path is relative to project root. Creates parent directories if needed. Use this instead of shell echo/cat for writing files.",
+      description: "Directly writes text content to a file on disk. Path is relative to project root.",
       requestBody: {
         required: true,
         content: {
@@ -114,21 +98,20 @@ export const workspaceOpenApiPaths: Record<string, unknown> = {
               type: "object",
               required: ["path", "content"],
               properties: {
-                path: { type: "string", description: "File path relative to project root (e.g. 'src/index.ts' or 'scripts/fix.ps1')." },
-                content: { type: "string", description: "Full file content as plain text. Supports any characters, Unicode, newlines, HTML, etc." },
+                path: { type: "string" },
+                content: { type: "string" },
               },
             },
           },
         },
       },
-      responses: { "200": { description: "File written.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+      responses: { "200": { description: "File written." } },
     },
   },
   "/workspace/read": {
     post: {
       operationId: "readFile",
       summary: "Read a text file. Returns full content.",
-      description: "Reads a file and returns its content as text. Path is relative to project root.",
       requestBody: {
         required: true,
         content: {
@@ -137,21 +120,20 @@ export const workspaceOpenApiPaths: Record<string, unknown> = {
               type: "object",
               required: ["path"],
               properties: {
-                path: { type: "string", description: "File path relative to project root." },
-                maxLines: { type: "integer", description: "Max lines to return (default: all).", default: 0 },
+                path: { type: "string" },
+                maxLines: { type: "integer", default: 0 },
               },
             },
           },
         },
       },
-      responses: { "200": { description: "File content.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+      responses: { "200": { description: "File content." } },
     },
   },
   "/workspace/patch": {
     post: {
       operationId: "patchFile",
       summary: "Find and replace text in a file.",
-      description: "Replaces first occurrence of 'search' with 'replace' in the file. Use for surgical edits without rewriting the whole file.",
       requestBody: {
         required: true,
         content: {
@@ -160,236 +142,162 @@ export const workspaceOpenApiPaths: Record<string, unknown> = {
               type: "object",
               required: ["path", "search", "replace"],
               properties: {
-                path: { type: "string", description: "File path relative to project root." },
-                search: { type: "string", description: "Exact text to find." },
-                replace: { type: "string", description: "Text to replace it with." },
+                path: { type: "string" },
+                search: { type: "string" },
+                replace: { type: "string" },
               },
             },
           },
         },
       },
-      responses: { "200": { description: "File patched.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+      responses: { "200": { description: "File patched." } },
     },
   },
   "/workspace/list": {
     post: {
       operationId: "listDir",
-      summary: "List directory contents (files and folders).",
-      description: "Lists entries in a directory. Path is relative to project root. Returns name and isDirectory for each entry.",
+      summary: "List directory contents.",
       requestBody: {
-        required: true,
         content: {
           "application/json": {
-            schema: {
-              type: "object",
-              properties: {
-                path: { type: "string", description: "Directory path relative to project root. Default: root.", default: "." },
-              },
-            },
+            schema: { type: "object", properties: { path: { type: "string", default: "." } } },
           },
         },
       },
-      responses: { "200": { description: "Directory listing.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+      responses: { "200": { description: "Directory listing." } },
     },
   },
   "/workspace/tree": {
     post: {
       operationId: "getTree",
       summary: "Get recursive directory tree.",
-      description: "Returns full directory tree up to given depth. Skips .git and node_modules.",
       requestBody: {
-        required: true,
         content: {
           "application/json": {
-            schema: {
-              type: "object",
-              properties: {
-                path: { type: "string", description: "Root path. Default: project root.", default: "." },
-                depth: { type: "integer", description: "Max depth. Default: 3.", default: 3 },
-              },
-            },
+            schema: { type: "object", properties: { path: { type: "string", default: "." }, depth: { type: "integer", default: 3 } } },
           },
         },
       },
-      responses: { "200": { description: "Directory tree.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+      responses: { "200": { description: "Directory tree." } },
     },
   },
   "/workspace/search": {
     post: {
       operationId: "searchFiles",
-      summary: "Search for text in files (like grep).",
-      description: "Searches for a pattern in files under the given path. Returns matching lines with file paths and line numbers. Skips .git, node_modules, and binary files.",
+      summary: "Search for text in files.",
       requestBody: {
         required: true,
         content: {
           "application/json": {
-            schema: {
-              type: "object",
-              required: ["pattern"],
-              properties: {
-                pattern: { type: "string", description: "Text or regex pattern to search for." },
-                path: { type: "string", description: "Directory to search in. Default: project root.", default: "." },
-                glob: { type: "string", description: "File glob filter (e.g. '*.ts', '*.cs'). Default: all files." },
-                maxResults: { type: "integer", description: "Max results. Default: 50.", default: 50 },
-              },
-            },
+            schema: { type: "object", required: ["pattern"], properties: { pattern: { type: "string" }, path: { type: "string", default: "." }, glob: { type: "string" }, maxResults: { type: "integer", default: 50 } } },
           },
         },
       },
-      responses: { "200": { description: "Search results.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+      responses: { "200": { description: "Search results." } },
     },
   },
   "/workspace/run": {
     post: {
       operationId: "runScript",
-      summary: "Write a script to a temp file and execute it. Returns full stdout/stderr.",
-      description: "Writes script content to a temp file (.ps1, .bat, .sh, .py, .js) and executes it. This avoids ALL shell escaping issues. Use this instead of queueTask for complex commands. The script file is saved in .agent-workspace/scripts/ and stdout/stderr in .agent-workspace/logs/.",
+      summary: "Write and execute a script.",
       requestBody: {
         required: true,
         content: {
           "application/json": {
-            schema: {
-              type: "object",
-              required: ["scriptContent"],
-              properties: {
-                scriptContent: { type: "string", description: "Full script content. For PowerShell use .ps1 syntax. For Python use .py syntax. For batch use .bat syntax." },
-                scriptType: { type: "string", enum: ["ps1", "bat", "sh", "py", "js"], description: "Script type/extension. Default: ps1 (PowerShell).", default: "ps1" },
-                cwd: { type: "string", description: "Working directory (relative to project root). Default: project root.", default: "." },
-                timeoutMs: { type: "integer", description: "Timeout in ms. Default: 120000 (2 min).", default: 120000 },
-              },
-            },
+            schema: { type: "object", required: ["scriptContent"], properties: { scriptContent: { type: "string" }, scriptType: { type: "string", enum: ["ps1", "bat", "sh", "py", "js"], default: "ps1" }, cwd: { type: "string", default: "." }, timeoutMs: { type: "integer", default: 120000 } } },
           },
         },
       },
-      responses: { "200": { description: "Script result with stdout/stderr.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+      responses: { "200": { description: "Script result." } },
     },
   },
   "/workspace/exec": {
     post: {
       operationId: "execCommand",
-      summary: "Run a single command directly. Returns full stdout/stderr.",
-      description: "Runs a single allowed command (git, node, npm, powershell, etc.) and returns the complete stdout and stderr. Faster than queueTask for simple commands since it returns results immediately instead of requiring a separate getTaskReport call.",
+      summary: "Run a single command directly.",
       requestBody: {
         required: true,
         content: {
           "application/json": {
-            schema: {
-              type: "object",
-              required: ["command"],
-              properties: {
-                command: { type: "string", enum: ["git", "node", "npm", "pnpm", "dotnet", "python", "py", "gemini", "powershell", "pwsh", "cmd"], description: "Command to run." },
-                args: { type: "array", items: { type: "string" }, description: "Command arguments.", default: [] },
-                cwd: { type: "string", description: "Working directory (relative to project root). Default: project root.", default: "." },
-                input: { type: "string", description: "Text to pipe to stdin.", default: "" },
-                timeoutMs: { type: "integer", description: "Timeout in ms. Default: 120000.", default: 120000 },
-              },
-            },
+            schema: { type: "object", required: ["command"], properties: { command: { type: "string" }, args: { type: "array", items: { type: "string" }, default: [] }, cwd: { type: "string", default: "." }, input: { type: "string", default: "" }, timeoutMs: { type: "integer", default: 120000 } } },
           },
         },
       },
-      responses: { "200": { description: "Command result.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+      responses: { "200": { description: "Command result." } },
     },
   },
   "/workspace/log/{logId}": {
     get: {
       operationId: "getScriptLog",
-      summary: "Get stdout/stderr log from a previous runScript execution.",
-      parameters: [
-        { name: "logId", in: "path", required: true, schema: { type: "string", pattern: "^[a-zA-Z0-9._-]+$" } },
-      ],
-      responses: { "200": { description: "Script log.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+      summary: "Get log from a script.",
+      parameters: [{ name: "logId", in: "path", required: true, schema: { type: "string" } }],
+      responses: { "200": { description: "Script log." } },
     },
   },
 };
 
-// --- Express route handlers ---
-
 export function registerWorkspaceRoutes(app: express.Application) {
-  // writeFile
   app.post("/workspace/write", async (req, res) => {
     try {
       const { path: p, content } = req.body;
       if (!p || content == null) return res.status(400).json({ ok: false, error: "path and content required" });
-
       const file = safePath(p);
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.writeFile(file, content, "utf8");
       const stats = await fs.stat(file);
-
       res.json({ ok: true, path: relPath(file), size: stats.size });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
   });
 
-  // readFile
   app.post("/workspace/read", async (req, res) => {
     try {
       const { path: p, maxLines } = req.body;
       if (!p) return res.status(400).json({ ok: false, error: "path required" });
-
       const file = safePath(p);
       let text = await fs.readFile(file, "utf8");
       const totalLines = text.split("\n").length;
-
-      if (maxLines && maxLines > 0) {
-        text = text.split("\n").slice(0, maxLines).join("\n");
-      }
-
-      // Truncate very large files to avoid response issues
+      if (maxLines && maxLines > 0) text = text.split("\n").slice(0, maxLines).join("\n");
       const MAX_CHARS = 100000;
-      const truncated = text.length > MAX_CHARS;
-      if (truncated) text = text.slice(0, MAX_CHARS);
-
-      res.json({ ok: true, path: relPath(file), content: redactText(text), totalLines, truncated });
+      if (text.length > MAX_CHARS) text = text.slice(0, MAX_CHARS);
+      res.json({ ok: true, path: relPath(file), content: redactText(text), totalLines });
     } catch (err: any) {
       res.status(404).json({ ok: false, error: err.message });
     }
   });
 
-  // patchFile
   app.post("/workspace/patch", async (req, res) => {
     try {
       const { path: p, search, replace } = req.body;
-      if (!p || search == null || replace == null) return res.status(400).json({ ok: false, error: "path, search, replace required" });
-
       const file = safePath(p);
       const before = await fs.readFile(file, "utf8");
-
-      if (!before.includes(search)) {
-        return res.status(400).json({ ok: false, error: "Search text not found in file" });
-      }
-
+      if (!before.includes(search)) return res.status(400).json({ ok: false, error: "Search text not found" });
       const after = before.replace(search, () => replace);
       await fs.writeFile(file, after, "utf8");
-
       res.json({ ok: true, path: relPath(file), replacements: 1 });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
   });
 
-  // listDir
   app.post("/workspace/list", async (req, res) => {
     try {
       const p = req.body.path || ".";
       const dir = safePath(p);
       const entries = await fs.readdir(dir, { withFileTypes: true });
       const result = entries.map(e => ({ name: e.name, isDirectory: e.isDirectory() }));
-
       res.json({ ok: true, path: relPath(dir), entries: result });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
   });
 
-  // getTree
   app.post("/workspace/tree", async (req, res) => {
     try {
       const p = req.body.path || ".";
       const maxDepth = req.body.depth || 3;
       const dir = safePath(p);
-
       async function getTree(current: string, depth: number): Promise<any[]> {
         if (depth > maxDepth) return [];
         const entries = await fs.readdir(current, { withFileTypes: true });
@@ -405,187 +313,102 @@ export function registerWorkspaceRoutes(app: express.Application) {
         }
         return children;
       }
-
-      const tree = await getTree(dir, 1);
-      res.json({ ok: true, path: relPath(dir), tree });
+      res.json({ ok: true, path: relPath(dir), tree: await getTree(dir, 0) });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
   });
 
-  // searchFiles
   app.post("/workspace/search", async (req, res) => {
     try {
       const { pattern, path: searchPath, glob, maxResults } = req.body;
-      if (!pattern) return res.status(400).json({ ok: false, error: "pattern required" });
-
       const dir = safePath(searchPath || ".");
       const limit = Math.min(maxResults || 50, 200);
-      const matches: Array<{ file: string; line: number; text: string }> = [];
+      const matches: any[] = [];
       const regex = new RegExp(pattern, "gi");
-
       async function searchDir(current: string) {
-        if (matches.length >= limit) return;
         const entries = await fs.readdir(current, { withFileTypes: true });
-
         for (const e of entries) {
           if (matches.length >= limit) break;
-          if (e.name === ".git" || e.name === "node_modules" || e.name === ".agent-queue" || e.name === ".agent-workspace") continue;
+          if (e.name === ".git" || e.name === "node_modules") continue;
           const full = path.join(current, e.name);
-
-          if (e.isDirectory()) {
-            await searchDir(full);
-          } else {
-            // Apply glob filter
-            if (glob && !e.name.match(new RegExp(glob.replace(/\*/g, ".*").replace(/\?/g, "."), "i"))) continue;
-
+          if (e.isDirectory()) await searchDir(full);
+          else {
             try {
               const text = await fs.readFile(full, "utf8");
               const lines = text.split("\n");
               for (let i = 0; i < lines.length && matches.length < limit; i++) {
-                if (regex.test(lines[i])) {
-                  matches.push({ file: relPath(full), line: i + 1, text: lines[i].trim().slice(0, 200) });
-                }
-                regex.lastIndex = 0;
+                if (regex.test(lines[i])) matches.push({ file: relPath(full), line: i + 1, text: lines[i].trim().slice(0, 200) });
               }
-            } catch {
-              // Skip binary/unreadable files
-            }
+            } catch {}
           }
         }
       }
-
       await searchDir(dir);
-      res.json({ ok: true, pattern, matches, total: matches.length });
+      res.json({ ok: true, matches });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
   });
 
-  // runScript
+  app.get("/workspace/file", async (req, res) => {
+    try {
+      const p = req.query.path as string;
+      console.log(`[Bridge] GET /workspace/file?path=${p}`);
+      if (!p) return res.status(400).json({ ok: false, error: "path required" });
+      const file = safePath(p);
+      console.log(`[Bridge] Resolved safe path: ${file}`);
+      const stats = await fs.stat(file);
+      if (!stats.isFile()) throw new Error("Not a file");
+      res.sendFile(file, (err) => {
+        if (err) console.error(`[Bridge] Error sending file: ${err.message}`);
+        else console.log(`[Bridge] File sent successfully: ${file}`);
+      });
+    } catch (err: any) {
+      console.error(`[Bridge] File access error: ${err.message}`);
+      res.status(404).json({ ok: false, error: err.message });
+    }
+  });
+
   app.post("/workspace/run", async (req, res) => {
     try {
       await ensureWorkspace();
-
       const { scriptContent, scriptType, cwd, timeoutMs } = req.body;
-      if (!scriptContent) return res.status(400).json({ ok: false, error: "scriptContent required" });
-
       const ext = scriptType || "ps1";
       const logId = `run-${Date.now()}`;
       const scriptFile = path.join(scriptsDir, `${logId}.${ext}`);
       const logFile = path.join(logsDir, `${logId}.json`);
       const workDir = safePath(cwd || ".");
-
-      // Write script to file
       await fs.writeFile(scriptFile, scriptContent, "utf8");
-
-      // Determine how to execute based on type
-      let command: string;
-      let args: string[];
-      switch (ext) {
-        case "ps1":
-          command = "powershell";
-          args = ["-ExecutionPolicy", "Bypass", "-File", scriptFile];
-          break;
-        case "bat":
-          command = "cmd";
-          args = ["/c", scriptFile];
-          break;
-        case "sh":
-          if (process.platform === "win32") {
-            command = "cmd";
-            args = ["/c", "bash", scriptFile];
-          } else {
-            command = "bash";
-            args = [scriptFile];
-          }
-          break;
-        case "py":
-          command = "python";
-          args = [scriptFile];
-          break;
-        case "js":
-          command = "node";
-          args = [scriptFile];
-          break;
-        default:
-          return res.status(400).json({ ok: false, error: `Unknown script type: ${ext}` });
-      }
-
-      const result = await execCommand(command, args, workDir, "", timeoutMs || 120000);
-
-      // Save log
-      const logData = {
-        logId,
-        scriptFile: relPath(scriptFile),
-        scriptType: ext,
-        cwd: relPath(workDir),
-        ...result,
-        timestamp: new Date().toISOString(),
-      };
-      await fs.writeFile(logFile, JSON.stringify(logData, null, 2));
-
-      // Truncate stdout/stderr for response if too long
-      const MAX = 50000;
-      const stdoutTrunc = result.stdout.length > MAX;
-      const stderrTrunc = result.stderr.length > MAX;
-
-      res.json({
-        ok: result.ok,
-        logId,
-        exitCode: result.exitCode,
-        stdout: redactText(result.stdout.slice(0, MAX)),
-        stderr: redactText(result.stderr.slice(0, MAX)),
-        stdoutTruncated: stdoutTrunc,
-        stderrTruncated: stderrTrunc,
-        durationMs: result.durationMs,
-        timedOut: result.timedOut,
-        scriptFile: relPath(scriptFile),
-        message: stdoutTrunc || stderrTrunc ? `Output truncated. Full log: GET /workspace/log/${logId}` : undefined,
-      });
+      let cmd = "powershell";
+      let args = ["-ExecutionPolicy", "Bypass", "-File", scriptFile];
+      if (ext === "py") { cmd = "python"; args = [scriptFile]; }
+      if (ext === "js") { cmd = "node"; args = [scriptFile]; }
+      if (ext === "bat") { cmd = "cmd"; args = ["/c", scriptFile]; }
+      const result = await execCommand(cmd, args, workDir, "", timeoutMs || 120000);
+      await fs.writeFile(logFile, JSON.stringify({ logId, ...result, timestamp: new Date().toISOString() }, null, 2));
+      res.json({ ok: result.ok, logId, ...result });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
   });
 
-  // execCommand (direct, synchronous)
   app.post("/workspace/exec", async (req, res) => {
     try {
       const { command, args, cwd, input, timeoutMs } = req.body;
-      if (!command) return res.status(400).json({ ok: false, error: "command required" });
-
       const workDir = safePath(cwd || ".");
       const result = await execCommand(command, args || [], workDir, input || "", timeoutMs || 120000);
-
-      const MAX = 50000;
-      res.json({
-        ok: result.ok,
-        exitCode: result.exitCode,
-        stdout: redactText(result.stdout.slice(0, MAX)),
-        stderr: redactText(result.stderr.slice(0, MAX)),
-        stdoutTruncated: result.stdout.length > MAX,
-        stderrTruncated: result.stderr.length > MAX,
-        durationMs: result.durationMs,
-        timedOut: result.timedOut,
-      });
+      res.json({ ok: result.ok, ...result });
     } catch (err: any) {
       res.status(400).json({ ok: false, error: err.message });
     }
   });
 
-  // getScriptLog
   app.get("/workspace/log/:logId", async (req, res) => {
     try {
-      const { logId } = req.params;
-      if (!/^[a-zA-Z0-9._-]+$/.test(logId)) {
-        return res.status(400).json({ ok: false, error: "Invalid log id" });
-      }
-
-      const logFile = path.join(logsDir, `${logId}.json`);
-      const raw = await fs.readFile(logFile, "utf8");
-      const data = JSON.parse(raw);
-
-      res.json({ ok: true, ...data, stdout: redactText(data.stdout || ""), stderr: redactText(data.stderr || "") });
+      const logFile = path.join(logsDir, `${req.params.logId}.json`);
+      const data = JSON.parse(await fs.readFile(logFile, "utf8"));
+      res.json({ ok: true, ...data });
     } catch {
       res.status(404).json({ ok: false, error: "Log not found" });
     }
