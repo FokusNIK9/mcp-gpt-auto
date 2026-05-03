@@ -59,7 +59,7 @@ fi
 
 # Try to detect ngrok/cloudflared public URL
 if [ -z "${ACTION_BRIDGE_PUBLIC_URL:-}" ]; then
-  NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null | grep -oP '"public_url"\s*:\s*"https://[^"]+' | head -1 | sed 's/"public_url"\s*:\s*"//' || true)
+  NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null | sed -n 's/.*"public_url"\s*:\s*"\(https:\/\/[^"]*\)".*/\1/p' | head -1 || true)
   if [ -n "$NGROK_URL" ]; then
     export ACTION_BRIDGE_PUBLIC_URL="$NGROK_URL"
     echo "[Launcher] Detected ngrok URL: $NGROK_URL"
