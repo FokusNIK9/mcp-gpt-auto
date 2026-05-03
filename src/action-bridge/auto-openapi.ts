@@ -80,10 +80,21 @@ function zodToJsonSchema(schema: unknown): Record<string, unknown> {
 
 	// Raw shape object (Record<string, ZodType>)
 	if (!z._def) {
+		// Filter out Zod internal properties that leak when {} is passed as inputSchema
+		const zodInternals = new Set([
+			"~standard", "def", "parse", "safeParse", "parseAsync", "safeParseAsync",
+			"check", "clone", "brand", "register", "spa", "refine", "superRefine",
+			"transform", "default", "catch", "describe", "pipe", "readonly",
+			"isNullable", "isOptional", "optional", "nullable", "nullish",
+			"array", "promise", "or", "and", "not",
+		]);
+
 		const properties: Record<string, unknown> = {};
 		const required: string[] = [];
 
 		for (const [key, val] of Object.entries(z)) {
+			if (zodInternals.has(key)) continue;
+			if (typeof val === "function") continue;
 			properties[key] = zodToJsonSchema(val);
 			if (!isOptionalOrDefault(val)) {
 				required.push(key);
