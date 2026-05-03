@@ -5,7 +5,7 @@ import path from "node:path";
 import { root } from "../gateway/config.js";
 import { redactText, redactSecrets } from "../gateway/redact.js";
 import { QueueTaskRequestSchema } from "./types.js";
-import { registerDashboardRoutes, initWebSocket, broadcast, notifyWebhook } from "./dashboard.js";
+import { registerDashboardRoutes, initWebSocket, broadcast, notifyWebhook, addLiveFeedEntry } from "./dashboard.js";
 import { registerWorkspaceRoutes, workspaceOpenApiPaths } from "./workspace.js";
 import { registerMcpSseRoutes } from "./mcp-sse.js";
 import { events } from "../gateway/utils.js";
@@ -13,16 +13,21 @@ import { events } from "../gateway/utils.js";
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-// --- Live Feed Memory (Circular Buffer) ---
-export const liveFeed: any[] = [];
-const MAX_LIVE_ITEMS = 50;
-
+// Handle audit events from the SAME process (Action Bridge directly calling tools)
 events.on("audit", (entry) => {
-  liveFeed.push(entry);
-  if (liveFeed.length > MAX_LIVE_ITEMS) {
-    liveFeed.shift();
-  }
-  broadcast({ type: "live_feed_update", entry });
+  addLiveFeedEntry(entry);
+});
+
+// Handle system errors
+events.on("system_error", (err) => {
+  broadcast({ type: "system_notification", level: "error", message: err.message });
+});
+
+// Internal endpoint to bridge events from EXTERNAL MCP processes to Dashboard
+app.post("/api/internal/audit", (req, res) => {
+  const entry = req.body;
+  addLiveFeedEntry(entry);
+  res.json({ ok: true });
 });
 
 // CORS middleware for browser addon

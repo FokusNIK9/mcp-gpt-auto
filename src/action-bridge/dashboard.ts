@@ -14,12 +14,24 @@ import { WebSocketServer, WebSocket } from "ws";
 import http from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { runGit, audit, rel, taskDir } from "../gateway/utils.js";
+import { runGit, audit, rel, taskDir, readAuditEntries } from "../gateway/utils.js";
 import { root, agent, inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 import { redactText } from "../gateway/redact.js";
 
 const auditLog = path.join(agent, "logs", "audit.jsonl");
 const execFileAsync = promisify(execFile);
+
+// --- Live Feed Memory (Circular Buffer) ---
+const liveFeed: any[] = [];
+const MAX_LIVE_ITEMS = 50;
+
+export function addLiveFeedEntry(entry: any) {
+  liveFeed.unshift(entry); // Newest first
+  if (liveFeed.length > MAX_LIVE_ITEMS) {
+    liveFeed.pop();
+  }
+  broadcast({ type: "live_feed_update", entry });
+}
 
 // --- WebSocket broadcast ---
 let wss: WebSocketServer | null = null;
@@ -106,7 +118,7 @@ async function parseTaskFile(dir: string, file: string, status: string) {
   try {
     const filePath = path.join(dir, file);
     const raw = await fs.readFile(filePath, "utf8");
-    const data = JSON.parse(raw);
+    const data = JSON.parse(redactText(raw)); // Redact on load
     const stats = await fs.stat(filePath);
     const ageMs = Date.now() - stats.mtime.getTime();
     return {
@@ -178,20 +190,6 @@ async function buildActivitySnapshot() {
   };
 }
 
-async function readAuditEntries(limit = 50) {
-  try {
-    const raw = await fs.readFile(auditLog, "utf8");
-    return raw.trim().split("\n")
-      .filter(l => l.length > 0)
-      .map(l => { try { return JSON.parse(l); } catch { return null; } })
-      .filter(Boolean)
-      .reverse()
-      .slice(0, limit);
-  } catch {
-    return [];
-  }
-}
-
 async function getGitStatusSummary() {
   try {
     const { stdout } = await execFileAsync("git", ["status", "--short"], { cwd: root, timeout: 5000 });
@@ -224,31 +222,27 @@ async function buildHealthSummary() {
   const recommendations: string[] = [];
 
   if (activity.summary.failed > 0) {
-    warnings.push(`${activity.summary.failed} failed task(s) in queue`);
-    recommendations.push("Open failed task reports and retry or archive resolved failures.");
+    warnings.push(`${activity.summary.failed} проваленных задач в очереди`);
+    recommendations.push("Откройте отчеты об ошибках и повторите или архивируйте задачи.");
   }
   if (activity.summary.running > 0) {
-    recommendations.push("Watch running tasks for stale state before launching long follow-up jobs.");
+    recommendations.push("Следите за активными задачами, чтобы избежать зависаний.");
   }
   if (activity.summary.stale > 0) {
-    warnings.push(`${activity.summary.stale} stale task(s) older than 3 days`);
-    recommendations.push("Cancel, retry, or archive stale tasks.");
+    warnings.push(`${activity.summary.stale} старых задач (более 3 дней)`);
+    recommendations.push("Очистите или перезапустите старые задачи.");
   }
   if (recentFailures > 0) {
-    warnings.push(`${recentFailures} failed audit event(s) in recent log window`);
-    recommendations.push("Inspect /api/audit for recent tool failures.");
+    warnings.push(`${recentFailures} сбоев аудита за последнее время`);
+    recommendations.push("Проверьте вкладку Аудит на наличие системных ошибок.");
   }
   if (recentRejected > 0) {
-    warnings.push(`${recentRejected} rejected review event(s) in recent log window`);
-    recommendations.push("Check latest review.run entries and compare them with current smoke-test output.");
+    warnings.push(`${recentRejected} правок отклонено ревьюером`);
+    recommendations.push("Проверьте последние логи review.run.");
   }
   if (git.ok && !git.clean) {
-    warnings.push(`Git working tree has ${git.changed} changed item(s)`);
-    recommendations.push("Review git status before committing Dashboard 2.0 changes.");
-  }
-  if (!git.ok) {
-    warnings.push("Git status is unavailable");
-    recommendations.push("Run git status manually to verify repository state.");
+    warnings.push(`В Git есть ${git.changed} незакоммиченных изменений`);
+    recommendations.push("Проверьте статус репозитория перед фиксацией изменений.");
   }
 
   const health = warnings.length === 0 ? "healthy" : (activity.summary.failed > 0 || recentFailures > 0 ? "degraded" : "warning");
@@ -296,6 +290,11 @@ export function registerDashboardRoutes(app: express.Application) {
     } catch (err) {
       res.status(500).json({ ok: false, error: "Failed to build activity" });
     }
+  });
+
+  // API: live feed (in-memory buffer)
+  app.get("/api/live-feed", (_req, res) => {
+    res.json({ ok: true, feed: liveFeed });
   });
 
   // API: detailed task log
@@ -484,7 +483,7 @@ export function registerDashboardRoutes(app: express.Application) {
       }
 
       if (archivedFiles.length === 0) {
-        return res.json({ ok: true, message: "Nothing selected or nothing found to archive." });
+        return res.json({ ok: true, message: "Ничего не выбрано или файлы не найдены." });
       }
 
       // 4. Git commit and push (sync removal of files from tracked folders)
@@ -497,7 +496,11 @@ export function registerDashboardRoutes(app: express.Application) {
       }
 
       broadcast({ type: "cleanup", count: archivedFiles.length });
-      return res.json({ ok: true, message: `Archived ${archivedFiles.length} items locally and synced to GitHub.` });
+      
+      // Clear in-memory live feed on cleanup
+      liveFeed.length = 0;
+      
+      return res.json({ ok: true, message: `Архивировано ${archivedFiles.length} элементов локально и синхронизировано с GitHub.` });
 
     } catch (err) {
       console.error("Cleanup error:", err);
@@ -531,7 +534,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mcp-gpt-auto — Dashboard</title>
+<title>mcp-gpt-auto — Панель управления</title>
 <style>
   :root {
     --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -585,6 +588,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .live-item .ts { color: var(--muted); margin-right: 8px; }
   .live-item .tool { color: var(--accent); font-weight: bold; margin-right: 8px; }
   .live-item .intent { color: var(--yellow); font-style: italic; margin-bottom: 4px; display: block; }
+  .live-item .data-scroll { max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 4px; margin-top: 4px; color: var(--muted); }
   .live-item.fail { border-left: 3px solid var(--red); background: rgba(248,81,73,0.05); }
   .live-item.success { border-left: 3px solid var(--green); }
   @keyframes slideIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
@@ -641,31 +645,38 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <div class="container">
   <header>
     <div style="display: flex; align-items: center; gap: 16px;">
-      <h1>mcp-gpt-auto Dashboard</h1>
-      <button class="btn" style="border-color: var(--yellow); color: var(--yellow);" onclick="openCleanupModal()">🧹 Cleanup Temp</button>
+      <h1>mcp-gpt-auto — Дашборд</h1>
+      <button class="btn" style="border-color: var(--yellow); color: var(--yellow);" onclick="openCleanupModal()">🧹 Очистка временных файлов</button>
     </div>
-    <span id="wsStatus" class="ws-status disconnected">disconnected</span>
+    <span id="wsStatus" class="ws-status disconnected">отключено</span>
   </header>
 
   <div class="stats" id="stats"></div>
 
   <section class="health-panel" id="healthPanel">
     <div class="health-head">
-      <div class="health-title">Dashboard 2.0 Health</div>
-      <div class="health-updated" id="healthUpdated">loading...</div>
+      <div class="health-title">Состояние системы (Health 2.1)</div>
+      <div id="healthUpdated" class="health-updated">загрузка...</div>
     </div>
-    <div id="healthSummary"><div class="empty">Loading health summary...</div></div>
+    <div id="healthSummary"><div class="empty">Загрузка данных о здоровье...</div></div>
   </section>
 
   <div class="tabs">
-    <div class="tab active" data-panel="live">Live Feed</div>
-    <div class="tab" data-panel="activity">Activity</div>
-    <div class="tab" data-panel="commands">Commands</div>
-    <div class="tab" data-panel="subagents">Sub-agents</div>
-    <div class="tab" data-panel="audit">Audit Log</div>
+    <div class="tab active" data-panel="live">Живой поток</div>
+    <div class="tab" data-panel="activity">Активность</div>
+    <div class="tab" data-panel="commands">Команды</div>
+    <div class="tab" data-panel="subagents">Суб-агенты</div>
+    <div class="tab" data-panel="audit">Аудит</div>
   </div>
 
-  <div id="live" class="panel active"></div>
+  <div id="live" class="panel active">
+    <div style="padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; background: rgba(88,166,255,0.02);">
+      <label style="font-size: 11px; display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--muted);">
+        <input type="checkbox" id="hideNoise" checked onchange="renderLiveFeed()"> Скрыть системный шум (info)
+      </label>
+    </div>
+    <div id="liveContent"></div>
+  </div>
   <div id="activity" class="panel"></div>
   <div id="commands" class="panel"></div>
   <div id="subagents" class="panel"></div>
@@ -685,20 +696,20 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <div class="modal-overlay" id="cleanupModalOverlay">
   <div class="modal cleanup-modal">
     <span class="close" onclick="closeCleanupModal()">&times;</span>
-    <h2>🧹 Archive & Cleanup</h2>
+    <h2>🧹 Архивация и Очистка</h2>
     <p style="color:var(--muted); font-size:12px; margin-bottom:16px;">
-      Files will be moved to local <b>archive</b> folder and removed from GitHub repository.
+      Выбранные файлы будут перемещены в локальный <b>архив</b> и удалены из репозитория GitHub.
     </p>
     
-    <label class="cleanup-option"><input type="checkbox" id="cleanDone" checked> Done Tasks (.json)</label>
-    <label class="cleanup-option"><input type="checkbox" id="cleanFailed" checked> Failed Tasks (.json)</label>
-    <label class="cleanup-option"><input type="checkbox" id="cleanReports" checked> Task Reports (.md)</label>
-    <label class="cleanup-option"><input type="checkbox" id="cleanScreens" checked> Screenshots (.png)</label>
-    <label class="cleanup-option"><input type="checkbox" id="cleanAudit" checked> Rotate Audit Log (keep last 500)</label>
+    <label class="cleanup-option"><input type="checkbox" id="cleanDone" checked> Выполненные задачи (.json)</label>
+    <label class="cleanup-option"><input type="checkbox" id="cleanFailed" checked> Ошибки (.json)</label>
+    <label class="cleanup-option"><input type="checkbox" id="cleanReports" checked> Отчеты (.md)</label>
+    <label class="cleanup-option"><input type="checkbox" id="cleanScreens" checked> Скриншоты (.png)</label>
+    <label class="cleanup-option"><input type="checkbox" id="cleanAudit" checked> Ротация логов (оставить 500 строк)</label>
 
     <div style="margin-top:20px; display:flex; gap:10px;">
-      <button class="btn retry" style="flex:1" onclick="confirmCleanup()">Start Archiving</button>
-      <button class="btn" onclick="closeCleanupModal()">Cancel</button>
+      <button class="btn retry" style="flex:1" onclick="confirmCleanup()">Начать очистку</button>
+      <button class="btn" onclick="closeCleanupModal()">Отмена</button>
     </div>
   </div>
 </div>
@@ -745,34 +756,35 @@ async function loadHealthSummary() {
   try {
     const r = await fetch(API + '/api/health-summary');
     const data = await r.json();
-    if (!data.ok) throw new Error(data.error || 'health summary failed');
+    if (!data.ok) throw new Error(data.error || 'ошибка здоровья');
     renderHealthSummary(data);
   } catch {
-    document.getElementById('healthUpdated').textContent = 'health unavailable';
-    document.getElementById('healthSummary').innerHTML = '<div class="empty">Failed to load Dashboard 2.0 health summary</div>';
+    document.getElementById('healthUpdated').textContent = 'состояние недоступно';
+    document.getElementById('healthSummary').innerHTML = '<div class="empty">Не удалось загрузить данные о здоровье системы</div>';
   }
 }
 
 function renderHealthSummary(data) {
+  const healthMap = { 'healthy': 'стабильно', 'warning': 'внимание', 'degraded': 'деградация' };
   const health = data.health || 'warning';
-  const warnings = data.warnings && data.warnings.length ? data.warnings : ['No warnings in current health window'];
-  const recommendations = data.recommendations && data.recommendations.length ? data.recommendations : ['No action needed right now'];
-  const gitLines = data.git && data.git.lines && data.git.lines.length ? data.git.lines.map(esc).join('\\n') : 'working tree clean';
+  const warnings = data.warnings && data.warnings.length ? data.warnings : ['Предупреждений нет'];
+  const recommendations = data.recommendations && data.recommendations.length ? data.recommendations : ['Действий не требуется'];
+  const gitLines = data.git && data.git.lines && data.git.lines.length ? data.git.lines.map(esc).join('\\n') : 'репозиторий чист';
   const queue = data.summary || { total: 0, running: 0, failed: 0 };
   const audit = data.audit || { recentRejected: 0, recentFailures: 0 };
-  document.getElementById('healthUpdated').textContent = 'updated ' + (data.updatedAt || 'now');
+  document.getElementById('healthUpdated').textContent = 'обновлено ' + new Date(data.updatedAt).toLocaleTimeString();
   document.getElementById('healthSummary').innerHTML =
     '<div class="health-grid">' +
-      '<div class="health-card"><div class="label">Overall</div><div class="value"><span class="health-badge ' + esc(health) + '">' + esc(health) + '</span></div></div>' +
-      '<div class="health-card"><div class="label">Queue</div><div class="value">' + queue.running + ' running</div></div>' +
-      '<div class="health-card"><div class="label">Failed tasks</div><div class="value">' + queue.failed + '</div></div>' +
-      '<div class="health-card"><div class="label">Git changes</div><div class="value">' + (data.git ? data.git.changed : '?') + '</div><div class="git-lines">' + gitLines + '</div></div>' +
+      '<div class="health-card"><div class="label">Общее состояние</div><div class="value"><span class="health-badge ' + esc(health) + '">' + esc(healthMap[health] || health) + '</span></div></div>' +
+      '<div class="health-card"><div class="label">Очередь</div><div class="value">' + queue.running + ' активно</div></div>' +
+      '<div class="health-card"><div class="label">Ошибки</div><div class="value">' + queue.failed + '</div></div>' +
+      '<div class="health-card"><div class="label">Git изменения</div><div class="value">' + (data.git ? data.git.changed : '?') + '</div><div class="git-lines">' + gitLines + '</div></div>' +
     '</div>' +
     '<div class="health-lists">' +
-      '<div class="health-list"><h3>Warnings</h3><ul>' + warnings.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul></div>' +
-      '<div class="health-list"><h3>Recommendations</h3><ul>' + recommendations.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul></div>' +
+      '<div class="health-list"><h3>Предупреждения</h3><ul>' + warnings.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul></div>' +
+      '<div class="health-list"><h3>Рекомендации</h3><ul>' + recommendations.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul></div>' +
     '</div>' +
-    '<div class="health-updated" style="margin-top:10px">Recent audit: ' + audit.recentFailures + ' failures, ' + audit.recentRejected + ' rejected reviews</div>';
+    '<div class="health-updated" style="margin-top:10px">Последний аудит: ' + audit.recentFailures + ' сбоев, ' + audit.recentRejected + ' отказов ревью</div>';
 }
 
 // --- Live Feed ---
@@ -780,50 +792,53 @@ const liveFeedItems = [];
 const MAX_LIVE_DISPLAY = 50;
 
 function renderLiveFeed() {
-  const el = document.getElementById('live');
-  if (!liveFeedItems.length) { el.innerHTML = '<div class="empty">Waiting for actions...</div>'; return; }
+  const el = document.getElementById('liveContent');
+  const hideNoise = document.getElementById('hideNoise').checked;
+  if (!liveFeedItems.length) { el.innerHTML = '<div class="empty">Ожидание действий агента...</div>'; return; }
   
   let html = '';
   for (const item of liveFeedItems) {
+    if (hideNoise && item.level === 'info') continue;
     const cls = item.ok ? 'success' : 'fail';
-    const time = new Date(item.ts).toLocaleTimeString();
-    html = '<div class="live-item ' + cls + '">' +
-      '<span class="intent">' + esc(item.intent || 'Direct Action') + '</span>' +
+    const isCritical = item.level === 'critical';
+    const time = new Date(item.ts).toLocaleString(); // Local Time
+    html += '<div class="live-item ' + cls + '" style="' + (isCritical ? 'background:rgba(210,153,34,0.03)' : '') + '">' +
+      '<span class="intent">' + esc(item.intent || 'Прямое действие') + '</span>' +
       '<div>' +
         '<span class="ts">[' + time + ']</span>' +
-        '<span class="tool">' + esc(item.tool) + '</span>' +
-        '<span>' + esc(JSON.stringify(item.data || '')) + '</span>' +
+        '<span class="tool" style="' + (isCritical ? 'color:var(--yellow)' : '') + '">' + esc(item.tool) + '</span>' +
+        '<div class="data-scroll">' + esc(JSON.stringify(item.data || '')) + '</div>' +
       '</div>' +
-    '</div>' + html; // Newest on top
+    '</div>';
   }
-  el.innerHTML = html;
+  el.innerHTML = html || '<div class="empty">Нет критических действий (шум скрыт)</div>';
 }
 
 // --- Stats ---
 function renderStats(summary) {
   document.getElementById('stats').innerHTML =
-    '<div class="stat-card"><div class="num">' + summary.total + '</div><div class="label">Total</div></div>' +
-    '<div class="stat-card inbox"><div class="num">' + summary.inbox + '</div><div class="label">In Queue</div></div>' +
-    '<div class="stat-card running"><div class="num">' + summary.running + '</div><div class="label">Running</div></div>' +
-    '<div class="stat-card done"><div class="num">' + summary.done + '</div><div class="label">Done</div></div>' +
-    '<div class="stat-card failed"><div class="num">' + summary.failed + '</div><div class="label">Failed</div></div>' +
-    '<div class="stat-card"><div class="num">' + summary.stale + '</div><div class="label">Stale (3d+)</div></div>';
+    '<div class="stat-card"><div class="num">' + summary.total + '</div><div class="label">Всего</div></div>' +
+    '<div class="stat-card inbox"><div class="num">' + summary.inbox + '</div><div class="label">В очереди</div></div>' +
+    '<div class="stat-card running"><div class="num">' + summary.running + '</div><div class="label">Выполняется</div></div>' +
+    '<div class="stat-card done"><div class="num">' + summary.done + '</div><div class="label">Готово</div></div>' +
+    '<div class="stat-card failed"><div class="num">' + summary.failed + '</div><div class="label">Ошибка</div></div>' +
+    '<div class="stat-card"><div class="num">' + summary.stale + '</div><div class="label">Старые (3д+)</div></div>';
 }
 
 // --- Activity Table ---
 function renderActivity(tasks) {
-  if (!tasks.length) { document.getElementById('activity').innerHTML = '<div class="empty">No tasks yet</div>'; return; }
-  let html = '<table><tr><th>Task ID</th><th>Title</th><th>Type</th><th>Status</th><th>Age</th><th>Actions</th></tr>';
+  if (!tasks.length) { document.getElementById('activity').innerHTML = '<div class="empty">Задач пока нет</div>'; return; }
+  let html = '<table><tr><th>ID Задачи</th><th>Заголовок</th><th>Тип</th><th>Статус</th><th>Возраст</th><th>Действия</th></tr>';
   for (const t of tasks) {
-    const stale = t.isStale ? ' <span class="badge stale">stale</span>' : '';
-    let actions = '<button class="btn" onclick="viewLog(\\'' + t.taskId + '\\')">Log</button> ';
+    const stale = t.isStale ? ' <span class="badge stale">старая</span>' : '';
+    let actions = '<button class="btn" onclick="viewLog(\\'' + t.taskId + '\\')">Лог</button> ';
     if (t.status === 'inbox' || t.status === 'running')
-      actions += '<button class="btn cancel" onclick="cancelTask(\\'' + t.taskId + '\\')">Cancel</button>';
+      actions += '<button class="btn cancel" onclick="cancelTask(\\'' + t.taskId + '\\')">Отмена</button>';
     if (t.status === 'failed' || t.status === 'done')
-      actions += '<button class="btn retry" onclick="retryTask(\\'' + t.taskId + '\\')">Retry</button>';
+      actions += '<button class="btn retry" onclick="retryTask(\\'' + t.taskId + '\\')">Повтор</button>';
     html += '<tr><td><code>' + esc(t.taskId) + '</code></td><td>' + esc(t.title) +
       '</td><td><span class="type-badge">' + esc(t.type) + '</span></td><td><span class="badge ' + t.status + '">' + t.status + '</span>' + stale +
-      '</td><td>' + t.ageDays + 'd</td><td>' + actions + '</td></tr>';
+      '</td><td>' + t.ageDays + 'д</td><td>' + actions + '</td></tr>';
   }
   html += '</table>';
   document.getElementById('activity').innerHTML = html;
@@ -832,8 +847,8 @@ function renderActivity(tasks) {
 // --- Commands Table (shell tasks) ---
 function renderCommands(tasks) {
   const shellTasks = tasks.filter(t => t.type === 'shell' || (t.commands && t.commands.length > 0));
-  if (!shellTasks.length) { document.getElementById('commands').innerHTML = '<div class="empty">No shell commands yet</div>'; return; }
-  let html = '<table><tr><th>Task ID</th><th>Commands</th><th>Status</th></tr>';
+  if (!shellTasks.length) { document.getElementById('commands').innerHTML = '<div class="empty">Команд пока нет</div>'; return; }
+  let html = '<table><tr><th>ID Задачи</th><th>Команды</th><th>Статус</th></tr>';
   for (const t of shellTasks) {
     const cmds = t.commands.map(c => esc(c.command + ' ' + (c.args || []).join(' '))).join('<br>');
     html += '<tr><td><code>' + esc(t.taskId) + '</code></td><td style="font-family:monospace;font-size:12px">' + cmds +
@@ -846,12 +861,12 @@ function renderCommands(tasks) {
 // --- Sub-agents Table ---
 function renderSubagents(tasks) {
   const geminiTasks = tasks.filter(t => t.type === 'gemini' || (t.taskId || '').toLowerCase().includes('subagent') || (t.title || '').toLowerCase().includes('subagent'));
-  if (!geminiTasks.length) { document.getElementById('subagents').innerHTML = '<div class="empty">No sub-agent tasks yet</div>'; return; }
-  let html = '<table><tr><th>Task ID</th><th>Instructions</th><th>Status</th><th>Actions</th></tr>';
+  if (!geminiTasks.length) { document.getElementById('subagents').innerHTML = '<div class="empty">Суб-агентов пока нет</div>'; return; }
+  let html = '<table><tr><th>ID Задачи</th><th>Инструкции</th><th>Статус</th><th>Действия</th></tr>';
   for (const t of geminiTasks) {
     const instr = esc(t.instructions || '').slice(0, 200);
     html += '<tr><td><code>' + esc(t.taskId) + '</code></td><td>' + instr +
-      '</td><td><span class="badge ' + t.status + '">' + t.status + '</span></td><td><button class="btn" onclick="viewLog(\\'' + t.taskId + '\\')">Log</button></td></tr>';
+      '</td><td><span class="badge ' + t.status + '">' + t.status + '</span></td><td><button class="btn" onclick="viewLog(\\'' + t.taskId + '\\')">Лог</button></td></tr>';
   }
   html += '</table>';
   document.getElementById('subagents').innerHTML = html;
@@ -863,7 +878,7 @@ async function loadAudit() {
     const r = await fetch(API + '/api/audit?limit=100');
     const data = await r.json();
     if (!data.entries || !data.entries.length) {
-      document.getElementById('audit').innerHTML = '<div class="empty">No audit entries</div>';
+      document.getElementById('audit').innerHTML = '<div class="empty">Записей аудита нет</div>';
       return;
     }
     let html = '';
@@ -873,7 +888,7 @@ async function loadAudit() {
         '</span><span>' + esc(JSON.stringify(e.data || '')) + '</span></div>';
     }
     document.getElementById('audit').innerHTML = html;
-  } catch { document.getElementById('audit').innerHTML = '<div class="empty">Failed to load audit</div>'; }
+  } catch { document.getElementById('audit').innerHTML = '<div class="empty">Не удалось загрузить аудит</div>'; }
 }
 
 // --- Actions ---
@@ -882,30 +897,30 @@ async function viewLog(taskId) {
     const r = await fetch(API + '/api/logs/' + taskId);
     const data = await r.json();
     let body = '';
-    if (data.task) body += 'Status: ' + data.task.status + '\\nType: ' + data.task.type + '\\nCreated: ' + data.task.createdAt + '\\n\\n';
+    if (data.task) body += 'Статус: ' + data.task.status + '\\nТип: ' + data.task.type + '\\nСоздано: ' + data.task.createdAt + '\\n\\n';
     if (data.report) body += data.report;
-    else body += '(no report yet)';
-    openModal('Task: ' + taskId, body);
-  } catch { notify('Failed to load log', 'error'); }
+    else body += '(отчет пока не готов)';
+    openModal('Задача: ' + taskId, body);
+  } catch { notify('Не удалось загрузить лог', 'error'); }
 }
 
 async function cancelTask(taskId) {
-  if (!confirm('Cancel task ' + taskId + '?')) return;
+  if (!confirm('Отменить задачу ' + taskId + '?')) return;
   try {
     const r = await fetch(API + '/api/tasks/' + taskId + '/cancel', { method: 'POST' });
     const data = await r.json();
-    if (data.ok) { notify('Cancelled: ' + taskId); refresh(); }
-    else notify(data.error || 'Cancel failed', 'error');
-  } catch { notify('Cancel failed', 'error'); }
+    if (data.ok) { notify('Задача отменена: ' + taskId); refresh(); }
+    else notify(data.error || 'Ошибка отмены', 'error');
+  } catch { notify('Ошибка запроса отмены', 'error'); }
 }
 
 async function retryTask(taskId) {
   try {
     const r = await fetch(API + '/api/tasks/' + taskId + '/retry', { method: 'POST' });
     const data = await r.json();
-    if (data.ok) { notify('Retried as: ' + data.newTaskId); refresh(); }
-    else notify(data.error || 'Retry failed', 'error');
-  } catch { notify('Retry failed', 'error'); }
+    if (data.ok) { notify('Перезапуск как: ' + data.newTaskId); refresh(); }
+    else notify(data.error || 'Ошибка перезапуска', 'error');
+  } catch { notify('Ошибка запроса перезапуска', 'error'); }
 }
 
 async function confirmCleanup() {
@@ -917,11 +932,11 @@ async function confirmCleanup() {
     audit: document.getElementById('cleanAudit').checked
   };
 
-  if (!Object.values(flags).some(v => v)) { notify('Select at least one option', 'error'); return; }
-  if (!confirm('Archive selected items locally and remove from GitHub?')) return;
+  if (!Object.values(flags).some(v => v)) { notify('Выберите хотя бы один пункт', 'error'); return; }
+  if (!confirm('Архивировать выбранные элементы и очистить GitHub?')) return;
 
   closeCleanupModal();
-  notify('Archiving... Please wait.', 'success');
+  notify('Выполняется очистка... Пожалуйста, подождите.', 'success');
   
   try {
     const r = await fetch(API + '/api/cleanup', {
@@ -931,8 +946,8 @@ async function confirmCleanup() {
     });
     const data = await r.json();
     if (data.ok) { notify(data.message); refresh(); loadHealthSummary(); }
-    else notify(data.error || 'Cleanup failed', 'error');
-  } catch { notify('Cleanup request failed', 'error'); }
+    else notify(data.error || 'Ошибка очистки', 'error');
+  } catch { notify('Запрос на очистку не удался', 'error'); }
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -958,8 +973,8 @@ function connectWs() {
   const ws = new WebSocket(proto + '//' + location.host + '/ws');
   const statusEl = document.getElementById('wsStatus');
 
-  ws.onopen = () => { statusEl.textContent = 'live'; statusEl.className = 'ws-status connected'; };
-  ws.onclose = () => { statusEl.textContent = 'disconnected'; statusEl.className = 'ws-status disconnected'; setTimeout(connectWs, 3000); };
+  ws.onopen = () => { statusEl.textContent = 'в эфире'; statusEl.className = 'ws-status connected'; };
+  ws.onclose = () => { statusEl.textContent = 'отключено'; statusEl.className = 'ws-status disconnected'; setTimeout(connectWs, 3000); };
   ws.onerror = () => ws.close();
   ws.onmessage = (e) => {
     try {
@@ -971,21 +986,40 @@ function connectWs() {
         renderCommands(msg.data.tasks);
         renderSubagents(msg.data.tasks);
         loadHealthSummary();
+      } else if (msg.type === 'live_feed_update') {
+        liveFeedItems.unshift(msg.entry);
+        if (liveFeedItems.length > MAX_LIVE_DISPLAY) liveFeedItems.pop();
+        renderLiveFeed();
+      } else if (msg.type === 'system_notification') {
+        notify(msg.message, msg.level);
       } else if (msg.type === 'cancelled') {
-        notify('Task cancelled: ' + msg.taskId);
+        notify('Задача отменена: ' + msg.taskId);
       } else if (msg.type === 'retried') {
-        notify('Task retried: ' + msg.originalTaskId + ' → ' + msg.newTaskId);
+        notify('Задача перезапущена: ' + msg.originalTaskId + ' → ' + msg.newTaskId);
       } else if (msg.type === 'cleanup') {
-        if (msg.count > 0) notify('Cleanup synced ' + msg.count + ' items.');
+        if (msg.count > 0) notify('Очистка завершена: ' + msg.count + ' эл.');
       }
     } catch {}
   };
+}
+
+async function loadLiveFeed() {
+  try {
+    const r = await fetch(API + '/api/live-feed');
+    const data = await r.json();
+    if (data.ok) {
+      liveFeedItems.length = 0;
+      liveFeedItems.push(...data.feed);
+      renderLiveFeed();
+    }
+  } catch {}
 }
 
 // --- Init ---
 refresh();
 loadHealthSummary();
 loadAudit();
+loadLiveFeed();
 connectWs();
 // Fallback polling if WS fails
 setInterval(refresh, 15000);
