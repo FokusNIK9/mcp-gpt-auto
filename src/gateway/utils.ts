@@ -2,11 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { root, agent, allowed, blocked } from "./config.js";
-import { redactSecrets, redactText } from "./redact.js";
-import { EventEmitter } from "node:events";
-
-// Global events for real-time monitoring
-export const events = new EventEmitter();
+import { redactSecrets } from "./redact.js";
 
 /** Wrap tool output with secret redaction */
 export function out(data: unknown) {
@@ -14,25 +10,13 @@ export function out(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(redacted, null, 2) }] };
 }
 
-/** Log tool usage to audit file with secret redaction and emit live event */
-export async function audit(tool: string, ok: boolean, data: any = null) {
+/** Log tool usage to audit file with secret redaction */
+export async function audit(tool: string, ok: boolean, data: unknown = null) {
   const redactedData = redactSecrets(data);
-  const entry = { 
-    ts: new Date().toISOString(), 
-    tool, 
-    ok, 
-    data: redactedData,
-    // Add intent if available in global context or data
-    intent: data?.intent || "Direct Action"
-  };
-
-  // Broadcast to Live Feed
-  events.emit("audit", entry);
-
   await fs.mkdir(path.join(agent, "logs"), { recursive: true });
   await fs.appendFile(
     path.join(agent, "logs", "audit.jsonl"),
-    `${JSON.stringify(entry)}\n`,
+    `${JSON.stringify({ ts: new Date().toISOString(), tool, ok, data: redactedData })}\n`,
   );
 }
 
@@ -150,39 +134,4 @@ export function taskDir(taskId: string) {
     throw new Error("Invalid task ID format.");
   }
   return path.join(agent, "tasks", taskId);
-}
-
-/**
- * Add authentication and non-interactive flags to git commands.
- */
-export function gitAuthArgs(args: string[]) {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) return args;
-
-  const remoteUrl = process.env.GITHUB_REMOTE_URL || "https://github.com/FokusNIK9/mcp-gpt-auto.git";
-  const authedRemoteUrl = remoteUrl.replace("https://", `https://x-access-token:${encodeURIComponent(token)}@`);
-
-  if (args[0] === "pull") {
-    const pullOptions = args.slice(1);
-    return ["pull", ...pullOptions, authedRemoteUrl, "main"];
-  }
-
-  if (args[0] === "push") {
-    return ["push", authedRemoteUrl, ...args.slice(1)]; // fix: was slice(2) in runner, but slice(1) might be better if we call runGit(["push", "origin", "main"])
-  }
-
-  return [
-    "-c",
-    "credential.helper=",
-    "-c",
-    "core.askPass=",
-    ...args
-  ];
-}
-
-/**
- * Run a git command with authentication and automatic redaction.
- */
-export async function runGit(args: string[]) {
-  return await run("git", gitAuthArgs(args), root) as any;
 }

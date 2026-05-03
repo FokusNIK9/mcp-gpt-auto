@@ -27,8 +27,6 @@ function Write-ErrorMsg($Text) {
 
 # 1. Check Port Availability
 Write-Header "Checking Environment"
-Set-Location $PSScriptRoot
-Write-Info "Working directory set to: $PSScriptRoot"
 $existingProcess = Get-NetTCPConnection -LocalPort $PORT -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($existingProcess) {
     $proc = Get-Process -Id $existingProcess.OwningProcess -ErrorAction SilentlyContinue
