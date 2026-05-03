@@ -1,0 +1,17 @@
+{
+  "taskId": "script_audit_done_marker",
+  "status": "done",
+  "startedAt": "2026-05-02T09:43:16.596Z",
+  "finishedAt": "2026-05-02T09:43:16.721Z",
+  "summary": "Task completed successfully",
+  "commandsRun": [
+    {
+      "command": "cmd /c echo SCRIPT_AUDIT_DONE",
+      "exitCode": 0,
+      "stdoutTail": "SCRIPT_AUDIT_DONE\r\n",
+      "stderrTail": ""
+    }
+  ],
+  "filesChanged": [],
+  "reportPath": ".agent-queue/reports/script_audit_done_marker.md"
+}

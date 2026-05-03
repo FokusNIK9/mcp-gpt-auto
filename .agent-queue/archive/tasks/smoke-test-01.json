@@ -1,0 +1,17 @@
+{
+  "taskId": "smoke-test-01",
+  "status": "done",
+  "startedAt": "2026-05-02T23:25:07.769Z",
+  "finishedAt": "2026-05-02T23:25:07.886Z",
+  "summary": "Task completed successfully",
+  "commandsRun": [
+    {
+      "command": "git status",
+      "exitCode": 0,
+      "stdoutTail": "On branch main\nYour branch is ahead of 'origin/main' by 1 commit.\n  (use \"git push\" to publish your local commits)\n\nnothing to commit, working tree clean\n",
+      "stderrTail": ""
+    }
+  ],
+  "filesChanged": [],
+  "reportPath": ".agent-queue/reports/smoke-test-01.md"
+}
