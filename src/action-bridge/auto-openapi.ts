@@ -20,7 +20,7 @@ import { registerDesktopTools } from "../servers/desktop/index.js";
 interface ToolEntry {
 	description?: string;
 	inputSchema?: unknown;
-	callback: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>;
+	handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>;
 	enabled: boolean;
 }
 
@@ -80,10 +80,21 @@ function zodToJsonSchema(schema: unknown): Record<string, unknown> {
 
 	// Raw shape object (Record<string, ZodType>)
 	if (!z._def) {
+		// Filter out Zod internal properties that leak when {} is passed as inputSchema
+		const zodInternals = new Set([
+			"~standard", "def", "parse", "safeParse", "parseAsync", "safeParseAsync",
+			"check", "clone", "brand", "register", "spa", "refine", "superRefine",
+			"transform", "default", "catch", "describe", "pipe", "readonly",
+			"isNullable", "isOptional", "optional", "nullable", "nullish",
+			"array", "promise", "or", "and", "not",
+		]);
+
 		const properties: Record<string, unknown> = {};
 		const required: string[] = [];
 
 		for (const [key, val] of Object.entries(z)) {
+			if (zodInternals.has(key)) continue;
+			if (typeof val === "function") continue;
 			properties[key] = zodToJsonSchema(val);
 			if (!isOptionalOrDefault(val)) {
 				required.push(key);
@@ -196,7 +207,7 @@ export function generateAutoOpenApi(): {
 			app.post(pathKey, async (req: express.Request, res: express.Response) => {
 				try {
 					const args = req.body || {};
-					const result = await tool.callback(args, {} as never);
+					const result = await tool.handler(args, {} as never);
 					res.json(result);
 				} catch (err: unknown) {
 					const message = err instanceof Error ? err.message : String(err);
