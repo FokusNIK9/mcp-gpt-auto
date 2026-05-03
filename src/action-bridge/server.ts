@@ -2,12 +2,13 @@ import express from "express";
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { root } from "../gateway/config.js";
+import { root, inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 import { redactText, redactSecrets } from "../gateway/redact.js";
 import { QueueTaskRequestSchema } from "./types.js";
 import { registerDashboardRoutes, initWebSocket, broadcast, notifyWebhook } from "./dashboard.js";
 import { registerWorkspaceRoutes, workspaceOpenApiPaths } from "./workspace.js";
 import { registerMcpSseRoutes } from "./mcp-sse.js";
+import { generateAutoOpenApi } from "./auto-openapi.js";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -28,12 +29,8 @@ const PORT = parseInt(process.env.PORT || "8787");
 const TOKEN = process.env.ACTION_BRIDGE_TOKEN;
 const PUBLIC_URL = process.env.ACTION_BRIDGE_PUBLIC_URL || `http://${HOST}:${PORT}`;
 
-const queueDir = path.join(root, ".agent-queue");
-const inboxDir = path.join(queueDir, "inbox");
-const runningDir = path.join(queueDir, "running");
-const doneDir = path.join(queueDir, "done");
-const failedDir = path.join(queueDir, "failed");
-const reportsDir = path.join(queueDir, "reports");
+// Auto-generate OpenAPI + Express routes from MCP tools
+const autoOpenApi = generateAutoOpenApi();
 
 function buildOpenApiSchema() {
   return {
@@ -263,6 +260,8 @@ function buildOpenApiSchema() {
       },
       // Workspace API — file-based code-agent operations
       ...workspaceOpenApiPaths,
+      // Auto-generated MCP tool endpoints (direct invocation)
+      ...autoOpenApi.paths,
     },
   };
 }
@@ -575,6 +574,10 @@ registerDashboardRoutes(app);
 
 // Register workspace routes (file-based code-agent API)
 registerWorkspaceRoutes(app);
+
+// Register auto-generated MCP tool routes (direct invocation via REST)
+autoOpenApi.registerRoutes(app);
+console.log(`[Bridge] Auto-registered ${autoOpenApi.toolNames.length} MCP tools as REST endpoints: ${autoOpenApi.toolNames.join(", ")}`);
 
 // Register MCP SSE transport (for Devin / external MCP clients)
 registerMcpSseRoutes(app);
