@@ -135,3 +135,38 @@ export function taskDir(taskId: string) {
   }
   return path.join(agent, "tasks", taskId);
 }
+
+/**
+ * Add authentication and non-interactive flags to git commands.
+ */
+export function gitAuthArgs(args: string[]) {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) return args;
+
+  const remoteUrl = process.env.GITHUB_REMOTE_URL || "https://github.com/FokusNIK9/mcp-gpt-auto.git";
+  const authedRemoteUrl = remoteUrl.replace("https://", `https://x-access-token:${encodeURIComponent(token)}@`);
+
+  if (args[0] === "pull") {
+    const pullOptions = args.slice(1);
+    return ["pull", ...pullOptions, authedRemoteUrl, "main"];
+  }
+
+  if (args[0] === "push") {
+    return ["push", authedRemoteUrl, ...args.slice(1)]; // fix: was slice(2) in runner, but slice(1) might be better if we call runGit(["push", "origin", "main"])
+  }
+
+  return [
+    "-c",
+    "credential.helper=",
+    "-c",
+    "core.askPass=",
+    ...args
+  ];
+}
+
+/**
+ * Run a git command with authentication and automatic redaction.
+ */
+export async function runGit(args: string[]) {
+  return await run("git", gitAuthArgs(args), root) as any;
+}

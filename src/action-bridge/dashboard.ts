@@ -14,6 +14,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import http from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { runGit, audit, rel, taskDir } from "../gateway/utils.js";
 import { root, agent, inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 import { redactText } from "../gateway/redact.js";
 
@@ -412,6 +413,97 @@ export function registerDashboardRoutes(app: express.Application) {
 
     res.status(404).json({ ok: false, error: "Task not in done or failed" });
   });
+
+  // API: Cleanup temp files (screenshots, done, failed, reports) and push to GitHub
+  app.post("/api/cleanup", async (req, res) => {
+    try {
+      const flags = req.body;
+      const archivedFiles = [];
+      
+      const archiveRoot = path.join(root, ".agent-queue", "archive");
+      const screenshotsArchive = path.join(root, "screenshots", "archive");
+      
+      await fs.mkdir(path.join(archiveRoot, "tasks"), { recursive: true });
+      await fs.mkdir(path.join(archiveRoot, "reports"), { recursive: true });
+      await fs.mkdir(screenshotsArchive, { recursive: true });
+
+      // 1. Screenshots
+      if (flags.screenshots) {
+        const screenshotsDir = path.join(root, "screenshots");
+        try {
+          const screens = await fs.readdir(screenshotsDir);
+          for (const s of screens) {
+            if (s.endsWith(".png") && s !== "latest-screenshot.png" && s !== "archive") {
+              await fs.rename(path.join(screenshotsDir, s), path.join(screenshotsArchive, s));
+              archivedFiles.push(`screenshots/${s}`);
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      // 2. Tasks and Reports
+      const taskDirs = [];
+      if (flags.done) taskDirs.push({ dir: doneDir, rel: ".agent-queue/done" });
+      if (flags.failed) taskDirs.push({ dir: failedDir, rel: ".agent-queue/failed" });
+
+      for (const { dir, rel } of taskDirs) {
+        try {
+          const files = await fs.readdir(dir);
+          for (const f of files) {
+            if (f.endsWith(".json") && f !== ".gitkeep") {
+              await fs.rename(path.join(dir, f), path.join(archiveRoot, "tasks", f));
+              archivedFiles.push(`${rel}/${f}`);
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      if (flags.reports) {
+        try {
+          const files = await fs.readdir(reportsDir);
+          for (const f of files) {
+            if (f.endsWith(".md") && f !== ".gitkeep" && f !== "README.md") {
+              await fs.rename(path.join(reportsDir, f), path.join(archiveRoot, "reports", f));
+              archivedFiles.push(`.agent-queue/reports/${f}`);
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      // 3. Audit Log Rotation
+      if (flags.audit) {
+        try {
+          const raw = await fs.readFile(auditLog, "utf8");
+          const lines = raw.trim().split("\n");
+          if (lines.length > 500) {
+            const truncated = lines.slice(-500).join("\n") + "\n";
+            await fs.writeFile(auditLog, truncated);
+            archivedFiles.push("logs/audit.jsonl (rotated)");
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      if (archivedFiles.length === 0) {
+        return res.json({ ok: true, message: "Nothing selected or nothing found to archive." });
+      }
+
+      // 4. Git commit and push (sync removal of files from tracked folders)
+      try {
+        await runGit(["add", "-u", "screenshots/", ".agent-queue/done/", ".agent-queue/failed/", ".agent-queue/reports/"]);
+        await runGit(["commit", "-m", `chore: dashboard cleanup/archive (${archivedFiles.length} items)`]);
+        await runGit(["push", "origin", "main"]);
+      } catch (gitErr) {
+        console.error("Git cleanup sync non-fatal error:", gitErr);
+      }
+
+      broadcast({ type: "cleanup", count: archivedFiles.length });
+      return res.json({ ok: true, message: `Archived ${archivedFiles.length} items locally and synced to GitHub.` });
+
+    } catch (err) {
+      console.error("Cleanup error:", err);
+      res.status(500).json({ ok: false, error: "Cleanup failed" });
+    }
+  });
 }
 
 // --- Webhook ---
@@ -464,7 +556,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .stat-card.failed .num { color: var(--red); }
   .stat-card.running .num { color: var(--yellow); }
   .stat-card.inbox .num { color: var(--blue); }
-
 
   .health-panel { background: linear-gradient(135deg, rgba(88,166,255,0.10), rgba(63,185,80,0.06)); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 20px; }
   .health-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
@@ -522,6 +613,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .modal .close { float: right; cursor: pointer; color: var(--muted); font-size: 18px; }
   .modal .close:hover { color: var(--text); }
 
+  .cleanup-modal { max-width: 400px; }
+  .cleanup-option { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; cursor: pointer; }
+  .cleanup-option input { cursor: pointer; width: 16px; height: 16px; }
+
   .audit-entry { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; display: flex; gap: 12px; }
   .audit-entry .ts { color: var(--muted); min-width: 180px; font-family: monospace; font-size: 11px; }
   .audit-entry .tool { color: var(--accent); min-width: 140px; }
@@ -537,12 +632,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <body>
 <div class="container">
   <header>
-    <h1>mcp-gpt-auto Dashboard</h1>
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <h1>mcp-gpt-auto Dashboard</h1>
+      <button class="btn" style="border-color: var(--yellow); color: var(--yellow);" onclick="openCleanupModal()">🧹 Cleanup Temp</button>
+    </div>
     <span id="wsStatus" class="ws-status disconnected">disconnected</span>
   </header>
 
   <div class="stats" id="stats"></div>
-
 
   <section class="health-panel" id="healthPanel">
     <div class="health-head">
@@ -565,11 +662,34 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <div id="audit" class="panel"></div>
 </div>
 
+<!-- Task Details Modal -->
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal">
     <span class="close" id="modalClose">&times;</span>
     <h2 id="modalTitle"></h2>
     <pre id="modalBody"></pre>
+  </div>
+</div>
+
+<!-- Cleanup Modal -->
+<div class="modal-overlay" id="cleanupModalOverlay">
+  <div class="modal cleanup-modal">
+    <span class="close" onclick="closeCleanupModal()">&times;</span>
+    <h2>🧹 Archive & Cleanup</h2>
+    <p style="color:var(--muted); font-size:12px; margin-bottom:16px;">
+      Files will be moved to local <b>archive</b> folder and removed from GitHub repository.
+    </p>
+    
+    <label class="cleanup-option"><input type="checkbox" id="cleanDone" checked> Done Tasks (.json)</label>
+    <label class="cleanup-option"><input type="checkbox" id="cleanFailed" checked> Failed Tasks (.json)</label>
+    <label class="cleanup-option"><input type="checkbox" id="cleanReports" checked> Task Reports (.md)</label>
+    <label class="cleanup-option"><input type="checkbox" id="cleanScreens" checked> Screenshots (.png)</label>
+    <label class="cleanup-option"><input type="checkbox" id="cleanAudit" checked> Rotate Audit Log (keep last 500)</label>
+
+    <div style="margin-top:20px; display:flex; gap:10px;">
+      <button class="btn retry" style="flex:1" onclick="confirmCleanup()">Start Archiving</button>
+      <button class="btn" onclick="closeCleanupModal()">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -596,10 +716,9 @@ function openModal(title, body) {
 document.getElementById('modalClose').addEventListener('click', () => {
   document.getElementById('modalOverlay').classList.remove('open');
 });
-document.getElementById('modalOverlay').addEventListener('click', (e) => {
-  if (e.target === document.getElementById('modalOverlay'))
-    document.getElementById('modalOverlay').classList.remove('open');
-});
+
+function openCleanupModal() { document.getElementById('cleanupModalOverlay').classList.add('open'); }
+function closeCleanupModal() { document.getElementById('cleanupModalOverlay').classList.remove('open'); }
 
 // --- Notifications ---
 function notify(msg, type = 'success') {
@@ -755,6 +874,33 @@ async function retryTask(taskId) {
   } catch { notify('Retry failed', 'error'); }
 }
 
+async function confirmCleanup() {
+  const flags = {
+    done: document.getElementById('cleanDone').checked,
+    failed: document.getElementById('cleanFailed').checked,
+    reports: document.getElementById('cleanReports').checked,
+    screenshots: document.getElementById('cleanScreens').checked,
+    audit: document.getElementById('cleanAudit').checked
+  };
+
+  if (!Object.values(flags).some(v => v)) { notify('Select at least one option', 'error'); return; }
+  if (!confirm('Archive selected items locally and remove from GitHub?')) return;
+
+  closeCleanupModal();
+  notify('Archiving... Please wait.', 'success');
+  
+  try {
+    const r = await fetch(API + '/api/cleanup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(flags)
+    });
+    const data = await r.json();
+    if (data.ok) { notify(data.message); refresh(); loadHealthSummary(); }
+    else notify(data.error || 'Cleanup failed', 'error');
+  } catch { notify('Cleanup request failed', 'error'); }
+}
+
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 // --- Data loading ---
@@ -795,6 +941,8 @@ function connectWs() {
         notify('Task cancelled: ' + msg.taskId);
       } else if (msg.type === 'retried') {
         notify('Task retried: ' + msg.originalTaskId + ' → ' + msg.newTaskId);
+      } else if (msg.type === 'cleanup') {
+        if (msg.count > 0) notify('Cleanup synced ' + msg.count + ' items.');
       }
     } catch {}
   };

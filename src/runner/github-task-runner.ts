@@ -1,46 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { TaskFile, TaskResult } from "./task-types.js";
-import { run, audit, rel, taskDir } from "../gateway/utils.js";
+import { run, runGit, audit, rel, taskDir } from "../gateway/utils.js";
 import { root, inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 import { redactText, redactSecrets } from "../gateway/redact.js";
 
-process.env.GIT_TERMINAL_PROMPT = "0";
-process.env.GCM_INTERACTIVE = "never";
-
-function gitAuthArgs(args: string[]) {
-    const token = process.env.GITHUB_TOKEN;
-    if (!token) return args;
-
-    const remoteUrl = process.env.GITHUB_REMOTE_URL || "https://github.com/FokusNIK9/mcp-gpt-auto.git";
-    const authedRemoteUrl = remoteUrl.replace("https://", `https://x-access-token:${encodeURIComponent(token)}@`);
-
-    if (args[0] === "pull") {
-        const pullOptions = args.slice(1);
-        return ["pull", ...pullOptions, authedRemoteUrl, "main"];
-    }
-
-    if (args[0] === "push") {
-        return ["push", authedRemoteUrl, ...args.slice(2)];
-    }
-
-    return [
-        "-c",
-        "credential.helper=",
-        "-c",
-        "core.askPass=",
-        ...args
-    ];
-}
-
-async function runGit(args: string[]) {
-    return await run("git", gitAuthArgs(args), root) as any;
-}
-
 async function pullChanges() {
     console.log("[Runner] Pulling changes from GitHub...");
-    // Use --ff-only to avoid merge conflicts in the runner
-    const r = await runGit(["pull", "--ff-only"]);
+    const r = await runGit(["pull", "--ff-only"]) as any;
     if (!r.ok) {
         console.error("[Runner] git pull failed:", redactText(r.stderr));
         return false;
@@ -56,32 +23,19 @@ async function pushChanges(message: string) {
     
     console.log(`[Runner] Pushing changes: ${message}`);
     
-    // Safety: check status and diff before pushing
-    const status = await runGit(["status"]);
-    const diffStat = await runGit(["diff", "--stat"]);
+    // ONLY add task queue files and screenshots. NEVER use 'git add .'
+    await runGit(["add", ".agent-queue/inbox/", ".agent-queue/running/", ".agent-queue/done/", ".agent-queue/failed/", ".agent-queue/reports/", "screenshots/"]);
     
-    console.log("[Runner] Git Status:\n", redactText(status.stdout));
-    console.log("[Runner] Git Diff Stat:\n", redactText(diffStat.stdout));
-
-    await runGit(["add", "."]);
-    const commitR = await run("git", gitAuthArgs(["commit", "-F", "-"]), root, message) as any;
+    const commitR = await runGit(["commit", "-m", message]) as any;
     
     if (!commitR.ok && !commitR.stdout.includes("nothing to commit")) {
         console.error("[Runner] git commit failed:", redactText(commitR.stderr));
         return false;
     }
     
-    // Support for GITHUB_TOKEN to avoid interactive prompts
-    const token = process.env.GITHUB_TOKEN;
-    const pushArgs = ["push", "origin", "main"];
-    
-    if (token) {
-        console.log("[Runner] Using GITHUB_TOKEN for push (value hidden)");
-    }
-
-    const pushR = await runGit(pushArgs);
+    const pushR = await runGit(["push", "origin", "main"]) as any;
     if (!pushR.ok) {
-        console.error("[Runner] git push failed. Ensure credentials are configured or GITHUB_TOKEN is set.");
+        console.error("[Runner] git push failed.");
         return false;
     }
     
