@@ -414,19 +414,56 @@ export function registerDashboardRoutes(app: express.Application) {
   });
 }
 
-// --- Webhook ---
+// --- Webhook & Notifications ---
 
-async function notifyWebhook(text: string) {
-  const url = process.env.WEBHOOK_URL;
-  if (!url) return;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
+const WEBHOOK_URL = process.env.WEBHOOK_URL || "";
 
+async function notifyTelegram(text: string) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
   try {
-    await fetch(url, {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, timestamp: new Date().toISOString() }),
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: `🤖 mcp-gpt-auto\n${text}`,
+        parse_mode: "HTML",
+      }),
     });
-  } catch { /* webhook is best-effort */ }
+  } catch { /* best-effort */ }
+}
+
+async function notifyDiscord(text: string) {
+  if (!DISCORD_WEBHOOK_URL) return;
+  try {
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: `🤖 **mcp-gpt-auto**: ${text}` }),
+    });
+  } catch { /* best-effort */ }
+}
+
+async function notifyGenericWebhook(text: string) {
+  if (!WEBHOOK_URL) return;
+  try {
+    await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, timestamp: new Date().toISOString(), source: "mcp-gpt-auto" }),
+    });
+  } catch { /* best-effort */ }
+}
+
+async function notifyWebhook(text: string) {
+  await Promise.allSettled([
+    notifyTelegram(text),
+    notifyDiscord(text),
+    notifyGenericWebhook(text),
+  ]);
 }
 
 // Expose for use from other routes
@@ -554,14 +591,61 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <div class="tabs">
     <div class="tab active" data-panel="activity">Activity</div>
+    <div class="tab" data-panel="newtask">+ New Task</div>
     <div class="tab" data-panel="commands">Commands</div>
     <div class="tab" data-panel="subagents">Sub-agents</div>
+    <div class="tab" data-panel="proxy">MCP Proxy</div>
     <div class="tab" data-panel="audit">Audit Log</div>
   </div>
 
   <div id="activity" class="panel active"></div>
+  <div id="newtask" class="panel">
+    <div style="max-width:600px;margin:0 auto">
+      <h2 style="margin-bottom:16px;font-size:16px">Create New Task</h2>
+      <form id="taskForm" style="display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="font-size:12px;color:var(--muted)">Task ID</label>
+          <input id="nt-id" type="text" placeholder="my-task-name" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" />
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted)">Title</label>
+          <input id="nt-title" type="text" placeholder="What should be done" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" />
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:12px;color:var(--muted)">Type</label>
+            <select id="nt-type" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+              <option value="shell">Shell</option>
+              <option value="gemini">Gemini (AI)</option>
+              <option value="review">Review</option>
+              <option value="mcp-smoke">MCP Smoke Test</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted)">Priority</label>
+            <select id="nt-priority" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
+              <option value="low">Low</option>
+              <option value="normal" selected>Normal</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted)">Instructions</label>
+          <textarea id="nt-instructions" rows="4" placeholder="Detailed instructions for the agent..." style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;resize:vertical"></textarea>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted)">Commands (one per line, format: command arg1 arg2)</label>
+          <textarea id="nt-commands" rows="3" placeholder="npm run build\\ngit status" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:monospace;font-size:13px;resize:vertical"></textarea>
+        </div>
+        <button type="submit" class="btn" style="padding:10px 20px;background:var(--accent);border-color:var(--accent);color:#fff;font-size:14px;font-weight:600;align-self:flex-start">Create Task</button>
+      </form>
+    </div>
+  </div>
   <div id="commands" class="panel"></div>
   <div id="subagents" class="panel"></div>
+  <div id="proxy" class="panel"><div class="empty">Loading MCP Proxy status...</div></div>
   <div id="audit" class="panel"></div>
 </div>
 
@@ -800,15 +884,72 @@ function connectWs() {
   };
 }
 
+// --- Task Form ---
+document.getElementById('taskForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const taskId = document.getElementById('nt-id').value.trim() || ('task-' + Date.now());
+  const title = document.getElementById('nt-title').value.trim();
+  const type = document.getElementById('nt-type').value;
+  const priority = document.getElementById('nt-priority').value;
+  const instructions = document.getElementById('nt-instructions').value.trim();
+  const commandsRaw = document.getElementById('nt-commands').value.trim();
+
+  const commands = commandsRaw ? commandsRaw.split('\\n').filter(Boolean).map(line => {
+    const parts = line.trim().split(/\\s+/);
+    return { command: parts[0], args: parts.slice(1) };
+  }) : [];
+
+  const body = { taskId, title: title || taskId, type, priority, instructions: instructions || title || taskId, commands };
+
+  try {
+    const r = await fetch(API + '/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Agent-Token': 'local-dashboard' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      notify('Task created: ' + taskId);
+      document.getElementById('taskForm').reset();
+      document.querySelector('[data-panel="activity"]').click();
+      refresh();
+    } else {
+      notify(data.error || 'Failed to create task', 'error');
+    }
+  } catch (err) { notify('Failed: ' + err.message, 'error'); }
+});
+
+// --- MCP Proxy Status ---
+async function loadProxyStatus() {
+  try {
+    const r = await fetch(API + '/ext/status');
+    const data = await r.json();
+    const panel = document.getElementById('proxy');
+    if (!data.ok || !data.servers || data.servers.length === 0) {
+      panel.innerHTML = '<div class="empty">No external MCP servers configured.<br><br><span style="font-size:12px;color:var(--muted)">Create <code>mcp-servers.json</code> in project root to add external servers.<br>See <code>mcp-servers.json.example</code> for format.</span></div>';
+      return;
+    }
+    let html = '<table><tr><th>Server</th><th>Status</th><th>Tools</th></tr>';
+    for (const s of data.servers) {
+      const badge = s.ready ? '<span class="badge done">ready</span>' : '<span class="badge failed">offline</span>';
+      html += '<tr><td><strong>' + esc(s.name) + '</strong></td><td>' + badge + '</td><td>' + s.tools.map(t => '<span class="type-badge">' + esc(t) + '</span> ').join('') + '</td></tr>';
+    }
+    html += '</table>';
+    panel.innerHTML = html;
+  } catch { document.getElementById('proxy').innerHTML = '<div class="empty">Failed to load proxy status</div>'; }
+}
+
 // --- Init ---
 refresh();
 loadHealthSummary();
 loadAudit();
+loadProxyStatus();
 connectWs();
 // Fallback polling if WS fails
 setInterval(refresh, 15000);
 setInterval(loadHealthSummary, 15000);
 setInterval(loadAudit, 30000);
+setInterval(loadProxyStatus, 30000);
 </script>
 </body>
 </html>`;

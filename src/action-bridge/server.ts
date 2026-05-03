@@ -13,6 +13,7 @@ import { registerTaskStreamRoutes } from "./task-stream.js";
 import { registerTaskSearchRoutes } from "./task-search.js";
 import { registerOAuthRoutes, isOAuthEnabled, validateOAuthToken } from "./oauth.js";
 import { startTunnel, getPublicUrl, stopTunnel } from "./tunnel.js";
+import { initMcpProxy, registerMcpProxyRoutes, getMcpProxyOpenApiPaths, getMcpProxyStatus, shutdownMcpProxy } from "./mcp-proxy.js";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -307,6 +308,8 @@ function buildOpenApiSchema() {
       ...workspaceOpenApiPaths,
       // Auto-generated MCP tool endpoints (direct invocation)
       ...autoOpenApi.paths,
+      // External MCP server tools (via mcp-proxy)
+      ...getMcpProxyOpenApiPaths(),
     },
   };
 }
@@ -330,10 +333,12 @@ const auth = (req: express.Request, res: express.Response, next: express.NextFun
   // OAuth endpoints are public (they handle their own auth)
   if (req.path.startsWith("/oauth/")) return next();
   // Dashboard & Local Sync endpoints — local access only
-  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file") {
+  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file" || req.path === "/ext/status") {
     if (isLocalRequest(req)) return next();
     return res.status(403).json({ ok: false, error: "This endpoint is only accessible from localhost" });
   }
+  // Allow local dashboard to create tasks without token
+  if (isLocalRequest(req) && req.headers["x-agent-token"] === "local-dashboard") return next();
   
   // Accept token from X-Agent-Token header or Authorization: Bearer header
   const agentToken = req.headers["x-agent-token"];
@@ -644,9 +649,19 @@ registerMcpSseRoutes(app);
 // Register OAuth2 routes (if enabled)
 registerOAuthRoutes(app);
 
+// MCP Proxy status endpoint
+app.get("/ext/status", (_req, res) => {
+  res.json({ ok: true, servers: getMcpProxyStatus() });
+});
+
 // Create HTTP server and attach WebSocket
 const server = http.createServer(app);
 initWebSocket(server);
+
+// Initialize MCP Proxy (external servers) then start listening
+initMcpProxy().then(() => {
+  registerMcpProxyRoutes(app);
+}).catch(() => { /* errors logged inside */ });
 
 server.listen(PORT, HOST, async () => {
   console.log(`[Bridge] Action bridge listening on http://${HOST}:${PORT}`);
@@ -675,12 +690,14 @@ server.listen(PORT, HOST, async () => {
 // Graceful shutdown
 process.on("SIGINT", () => {
   console.log("\n[Bridge] Shutting down...");
+  shutdownMcpProxy();
   stopTunnel();
   server.close();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
+  shutdownMcpProxy();
   stopTunnel();
   server.close();
   process.exit(0);

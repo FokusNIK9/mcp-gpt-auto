@@ -246,6 +246,48 @@ Set `AUTO_TUNNEL=true` to automatically start a tunnel on server startup. Prefer
 - `subagent.gemini.run` — Run Gemini CLI as sub-agent
 - `review.bundle`, `review.run` — Code review automation
 
+## New Features (v0.3)
+
+### MCP Proxy — Connect Any External MCP Server
+
+Add any MCP server from the community (1000+ available) and it auto-appears as REST endpoints for ChatGPT:
+
+1. Create `mcp-servers.json` in project root (see `mcp-servers.json.example`):
+```json
+{
+  "servers": [
+    { "name": "github", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "..."} },
+    { "name": "sqlite", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "./data.db"] }
+  ]
+}
+```
+
+2. Restart the server. External tools appear at `/ext/{serverName}/{toolName}` and in OpenAPI schema automatically.
+
+3. Check status: `GET /ext/status`
+
+### Task Creation from Dashboard
+
+Open `http://localhost:8787/ui` → click "+ New Task" tab → fill in the form → submit. Tasks go directly into the queue without needing ChatGPT or curl.
+
+### Telegram & Discord Notifications
+
+Get notified when tasks complete or fail:
+
+```bash
+# Telegram
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+TELEGRAM_CHAT_ID=987654321
+
+# Discord
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+
+# Generic webhook (any URL)
+WEBHOOK_URL=https://your-service.com/webhook
+```
+
+All notification channels fire simultaneously. Set any combination — unused ones are silently skipped.
+
 ### REST Endpoints (via Action Bridge)
 All MCP tools are automatically exposed as REST endpoints at `/tools/<tool.name>` with proper OpenAPI schemas.
 
@@ -259,6 +301,8 @@ Additionally:
 - `GET /tasks/stats` — Aggregate task statistics
 - `GET /reports` — List recent reports
 - `GET /dashboard` — Dashboard JSON
+- `GET /ext/status` — MCP Proxy status (external servers)
+- `POST /ext/{server}/{tool}` — Call external MCP tool
 - `POST /oauth/token` — OAuth2 token endpoint (if enabled)
 - `POST /oauth/revoke` — Revoke OAuth token
 - Workspace API: `/workspace/write`, `/workspace/read`, `/workspace/patch`, `/workspace/list`, `/workspace/tree`, `/workspace/search`, `/workspace/run`, `/workspace/exec`
