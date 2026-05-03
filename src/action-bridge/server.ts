@@ -9,6 +9,10 @@ import { registerDashboardRoutes, initWebSocket, broadcast, notifyWebhook } from
 import { registerWorkspaceRoutes, workspaceOpenApiPaths } from "./workspace.js";
 import { registerMcpSseRoutes } from "./mcp-sse.js";
 import { generateAutoOpenApi } from "./auto-openapi.js";
+import { registerTaskStreamRoutes } from "./task-stream.js";
+import { registerTaskSearchRoutes } from "./task-search.js";
+import { registerOAuthRoutes, isOAuthEnabled, validateOAuthToken } from "./oauth.js";
+import { startTunnel, getPublicUrl, stopTunnel } from "./tunnel.js";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -258,6 +262,47 @@ function buildOpenApiSchema() {
           },
         },
       },
+      "/tasks/search": {
+        get: {
+          operationId: "searchTasks",
+          summary: "Search and filter task history.",
+          parameters: [
+            { name: "status", in: "query", schema: { type: "string", enum: ["inbox", "running", "done", "failed", "all"], default: "all" } },
+            { name: "type", in: "query", schema: { type: "string" } },
+            { name: "tag", in: "query", schema: { type: "string" } },
+            { name: "query", in: "query", schema: { type: "string" } },
+            { name: "limit", in: "query", schema: { type: "integer", default: 50, maximum: 200 } },
+            { name: "offset", in: "query", schema: { type: "integer", default: 0 } },
+            { name: "sortBy", in: "query", schema: { type: "string", enum: ["createdAt", "modifiedAt", "priority"], default: "createdAt" } },
+            { name: "sortOrder", in: "query", schema: { type: "string", enum: ["asc", "desc"], default: "desc" } },
+            { name: "since", in: "query", schema: { type: "string", format: "date-time" } },
+            { name: "until", in: "query", schema: { type: "string", format: "date-time" } },
+          ],
+          responses: { "200": { description: "Search results.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+        },
+      },
+      "/tasks/stats": {
+        get: {
+          operationId: "getTaskStats",
+          summary: "Get aggregate task statistics.",
+          responses: { "200": { description: "Task statistics.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+        },
+      },
+      "/tasks/{taskId}/stream": {
+        get: {
+          operationId: "streamTaskProgress",
+          summary: "Subscribe to real-time task progress via SSE.",
+          parameters: [{ name: "taskId", in: "path", required: true, schema: { type: "string" } }],
+          responses: { "200": { description: "SSE stream of progress events." } },
+        },
+      },
+      "/tasks/stream": {
+        get: {
+          operationId: "streamAllTasks",
+          summary: "Subscribe to all task progress events via SSE.",
+          responses: { "200": { description: "SSE firehose of all task events." } },
+        },
+      },
       // Workspace API — file-based code-agent operations
       ...workspaceOpenApiPaths,
       // Auto-generated MCP tool endpoints (direct invocation)
@@ -282,6 +327,8 @@ function isLocalRequest(req: express.Request): boolean {
 const auth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   // Public endpoints (no auth needed)
   if (req.path === "/health" || req.path === "/openapi.json") return next();
+  // OAuth endpoints are public (they handle their own auth)
+  if (req.path.startsWith("/oauth/")) return next();
   // Dashboard & Local Sync endpoints — local access only
   if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file") {
     if (isLocalRequest(req)) return next();
@@ -295,6 +342,12 @@ const auth = (req: express.Request, res: express.Response, next: express.NextFun
     ? authHeader.slice(7)
     : null;
   const providedToken = agentToken || bearerToken;
+
+  // Try OAuth token validation first (if enabled)
+  if (isOAuthEnabled() && typeof bearerToken === "string") {
+    const oauthRecord = validateOAuthToken(bearerToken);
+    if (oauthRecord) return next();
+  }
 
   if (!TOKEN) {
     console.error("[Bridge] ACTION_BRIDGE_TOKEN not set in environment");
@@ -319,6 +372,12 @@ app.get("/health", (_req, res) => {
 app.get("/openapi.json", (_req, res) => {
   res.json(buildOpenApiSchema());
 });
+
+// Register task search & stats routes BEFORE parametric /tasks/:taskId
+registerTaskSearchRoutes(app);
+
+// Register task streaming routes (SSE for real-time progress)
+registerTaskStreamRoutes(app);
 
 app.post("/tasks", async (req, res) => {
   const result = QueueTaskRequestSchema.safeParse(req.body);
@@ -582,12 +641,14 @@ console.log(`[Bridge] Auto-registered ${autoOpenApi.toolNames.length} MCP tools 
 // Register MCP SSE transport (for Devin / external MCP clients)
 registerMcpSseRoutes(app);
 
+// Register OAuth2 routes (if enabled)
+registerOAuthRoutes(app);
 
 // Create HTTP server and attach WebSocket
 const server = http.createServer(app);
 initWebSocket(server);
 
-server.listen(PORT, HOST, () => {
+server.listen(PORT, HOST, async () => {
   console.log(`[Bridge] Action bridge listening on http://${HOST}:${PORT}`);
   console.log(`[Bridge] Dashboard: http://${HOST}:${PORT}/ui`);
   console.log(`[Bridge] WebSocket: ws://${HOST}:${PORT}/ws`);
@@ -596,4 +657,31 @@ server.listen(PORT, HOST, () => {
   if (!TOKEN) {
     console.warn("[Bridge] WARNING: ACTION_BRIDGE_TOKEN is not set. Auth will fail.");
   }
+
+  // Auto-start tunnel if requested
+  if (process.env.AUTO_TUNNEL === "true") {
+    try {
+      const provider = (process.env.TUNNEL_PROVIDER || "auto") as "cloudflared" | "ngrok" | "auto";
+      const url = await startTunnel({ port: PORT, provider });
+      console.log(`[Bridge] Tunnel active: ${url}`);
+      console.log(`[Bridge] Use this URL in your Custom GPT Action configuration.`);
+    } catch (err: any) {
+      console.warn(`[Bridge] Tunnel failed: ${err.message}`);
+      console.warn("[Bridge] Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
+    }
+  }
+});
+
+// Graceful shutdown
+process.on("SIGINT", () => {
+  console.log("\n[Bridge] Shutting down...");
+  stopTunnel();
+  server.close();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  stopTunnel();
+  server.close();
+  process.exit(0);
 });
