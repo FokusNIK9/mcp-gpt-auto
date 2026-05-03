@@ -10,7 +10,16 @@ import {
     clearRetryMeta, sortByPriority,
 } from "./task-scheduler.js";
 import { syncIssuesToTasks, reportTaskToIssue } from "./github-issues.js";
-import { emitProgress } from "../action-bridge/task-stream.js";
+
+// Relay progress to bridge via HTTP (cross-process compatible)
+const BRIDGE_URL = process.env.ACTION_BRIDGE_URL || "http://127.0.0.1:8787";
+function emitProgress(taskId: string, type: string, data: Record<string, unknown> = {}): void {
+    fetch(`${BRIDGE_URL}/api/progress`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, type, data }),
+    }).catch(() => { /* best-effort, bridge might not be running */ });
+}
 
 process.env.GIT_TERMINAL_PROMPT = "0";
 process.env.GCM_INTERACTIVE = "never";

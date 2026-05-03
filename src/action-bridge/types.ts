@@ -21,7 +21,7 @@ export const QueueTaskRequestSchema = z.object({
   taskId: z.string().regex(/^[a-zA-Z0-9._-]+$/),
   title: z.string(),
   type: z.enum(["shell", "gemini", "review", "mcp-smoke"]),
-  priority: z.enum(["low", "normal", "high"]).default("normal"),
+  priority: z.enum(["low", "normal", "high", "critical"]).default("normal"),
   instructions: z.string(),
   commands: z.array(CommandSchema).default([]),
   allowedFiles: z.array(z.string()).default([

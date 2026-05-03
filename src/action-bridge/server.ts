@@ -92,7 +92,7 @@ function buildOpenApiSchema() {
             },
             priority: {
               type: "string",
-              enum: ["low", "normal", "high"],
+              enum: ["low", "normal", "high", "critical"],
               default: "normal",
             },
             instructions: { type: "string" },

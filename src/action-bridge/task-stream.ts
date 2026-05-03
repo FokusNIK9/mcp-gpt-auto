@@ -44,8 +44,19 @@ export function emitProgress(taskId: string, type: TaskProgressEvent["type"], da
  *
  * GET /tasks/:taskId/stream — SSE stream of progress events for a specific task
  * GET /tasks/stream — SSE stream of ALL task progress events
+ * POST /api/progress — Internal endpoint for runner to relay progress (cross-process)
  */
 export function registerTaskStreamRoutes(app: express.Application): void {
+	// Internal progress relay endpoint (used by runner process to send events to bridge)
+	app.post("/api/progress", (req, res) => {
+		const { taskId, type, data } = req.body || {};
+		if (!taskId || !type) {
+			return res.status(400).json({ ok: false, error: "taskId and type required" });
+		}
+		emitProgress(taskId, type, data || {});
+		res.json({ ok: true });
+	});
+
 	// Stream progress for a specific task
 	app.get("/tasks/:taskId/stream", (req, res) => {
 		const { taskId } = req.params;
