@@ -581,6 +581,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .tab:hover { color: var(--text); }
   .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
+  .live-item { padding: 10px; border-bottom: 1px solid var(--border); font-family: monospace; font-size: 12px; animation: slideIn 0.3s ease-out; }
+  .live-item .ts { color: var(--muted); margin-right: 8px; }
+  .live-item .tool { color: var(--accent); font-weight: bold; margin-right: 8px; }
+  .live-item .intent { color: var(--yellow); font-style: italic; margin-bottom: 4px; display: block; }
+  .live-item.fail { border-left: 3px solid var(--red); background: rgba(248,81,73,0.05); }
+  .live-item.success { border-left: 3px solid var(--green); }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
+
   .panel { display: none; }
   .panel.active { display: block; }
 
@@ -650,13 +658,15 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </section>
 
   <div class="tabs">
-    <div class="tab active" data-panel="activity">Activity</div>
+    <div class="tab active" data-panel="live">Live Feed</div>
+    <div class="tab" data-panel="activity">Activity</div>
     <div class="tab" data-panel="commands">Commands</div>
     <div class="tab" data-panel="subagents">Sub-agents</div>
     <div class="tab" data-panel="audit">Audit Log</div>
   </div>
 
-  <div id="activity" class="panel active"></div>
+  <div id="live" class="panel active"></div>
+  <div id="activity" class="panel"></div>
   <div id="commands" class="panel"></div>
   <div id="subagents" class="panel"></div>
   <div id="audit" class="panel"></div>
@@ -763,6 +773,30 @@ function renderHealthSummary(data) {
       '<div class="health-list"><h3>Recommendations</h3><ul>' + recommendations.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul></div>' +
     '</div>' +
     '<div class="health-updated" style="margin-top:10px">Recent audit: ' + audit.recentFailures + ' failures, ' + audit.recentRejected + ' rejected reviews</div>';
+}
+
+// --- Live Feed ---
+const liveFeedItems = [];
+const MAX_LIVE_DISPLAY = 50;
+
+function renderLiveFeed() {
+  const el = document.getElementById('live');
+  if (!liveFeedItems.length) { el.innerHTML = '<div class="empty">Waiting for actions...</div>'; return; }
+  
+  let html = '';
+  for (const item of liveFeedItems) {
+    const cls = item.ok ? 'success' : 'fail';
+    const time = new Date(item.ts).toLocaleTimeString();
+    html = '<div class="live-item ' + cls + '">' +
+      '<span class="intent">' + esc(item.intent || 'Direct Action') + '</span>' +
+      '<div>' +
+        '<span class="ts">[' + time + ']</span>' +
+        '<span class="tool">' + esc(item.tool) + '</span>' +
+        '<span>' + esc(JSON.stringify(item.data || '')) + '</span>' +
+      '</div>' +
+    '</div>' + html; // Newest on top
+  }
+  el.innerHTML = html;
 }
 
 // --- Stats ---

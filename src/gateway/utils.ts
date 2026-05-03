@@ -2,7 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { root, agent, allowed, blocked } from "./config.js";
-import { redactSecrets } from "./redact.js";
+import { redactSecrets, redactText } from "./redact.js";
+import { EventEmitter } from "node:events";
+
+// Global events for real-time monitoring
+export const events = new EventEmitter();
 
 /** Wrap tool output with secret redaction */
 export function out(data: unknown) {
@@ -10,13 +14,25 @@ export function out(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(redacted, null, 2) }] };
 }
 
-/** Log tool usage to audit file with secret redaction */
-export async function audit(tool: string, ok: boolean, data: unknown = null) {
+/** Log tool usage to audit file with secret redaction and emit live event */
+export async function audit(tool: string, ok: boolean, data: any = null) {
   const redactedData = redactSecrets(data);
+  const entry = { 
+    ts: new Date().toISOString(), 
+    tool, 
+    ok, 
+    data: redactedData,
+    // Add intent if available in global context or data
+    intent: data?.intent || "Direct Action"
+  };
+
+  // Broadcast to Live Feed
+  events.emit("audit", entry);
+
   await fs.mkdir(path.join(agent, "logs"), { recursive: true });
   await fs.appendFile(
     path.join(agent, "logs", "audit.jsonl"),
-    `${JSON.stringify({ ts: new Date().toISOString(), tool, ok, data: redactedData })}\n`,
+    `${JSON.stringify(entry)}\n`,
   );
 }
 

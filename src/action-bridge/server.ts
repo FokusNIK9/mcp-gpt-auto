@@ -8,9 +8,22 @@ import { QueueTaskRequestSchema } from "./types.js";
 import { registerDashboardRoutes, initWebSocket, broadcast, notifyWebhook } from "./dashboard.js";
 import { registerWorkspaceRoutes, workspaceOpenApiPaths } from "./workspace.js";
 import { registerMcpSseRoutes } from "./mcp-sse.js";
+import { events } from "../gateway/utils.js";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
+
+// --- Live Feed Memory (Circular Buffer) ---
+export const liveFeed: any[] = [];
+const MAX_LIVE_ITEMS = 50;
+
+events.on("audit", (entry) => {
+  liveFeed.push(entry);
+  if (liveFeed.length > MAX_LIVE_ITEMS) {
+    liveFeed.shift();
+  }
+  broadcast({ type: "live_feed_update", entry });
+});
 
 // CORS middleware for browser addon
 app.use((req, res, next) => {
