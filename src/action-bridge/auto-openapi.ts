@@ -20,7 +20,7 @@ import { registerDesktopTools } from "../servers/desktop/index.js";
 interface ToolEntry {
 	description?: string;
 	inputSchema?: unknown;
-	callback: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>;
+	handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>;
 	enabled: boolean;
 }
 
@@ -207,7 +207,7 @@ export function generateAutoOpenApi(): {
 			app.post(pathKey, async (req: express.Request, res: express.Response) => {
 				try {
 					const args = req.body || {};
-					const result = await tool.callback(args, {} as never);
+					const result = await tool.handler(args, {} as never);
 					res.json(result);
 				} catch (err: unknown) {
 					const message = err instanceof Error ? err.message : String(err);
