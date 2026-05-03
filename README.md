@@ -1,189 +1,206 @@
 # mcp-gpt-auto
 
-Локальная агентная система для работы с твоим ПК через управляемые MCP-tools.
+**Turn your regular ChatGPT Plus into a local dev agent** — no API keys, no Developer Mode, no cloud VMs. Your code stays on your machine, ChatGPT stays in your browser.
 
-Цель проекта: оставить чат главным центром управления, но дать агенту безопасные локальные руки:
+## What is this?
 
-- читать и патчить файлы в workspace;
-- запускать команды;
-- получать скриншот;
-- гонять тесты;
-- запускать Gemini CLI как саб-агента;
-- принимать от саб-агента структурированный результат;
-- делать review/diff/debug;
-- коммитить и пушить только по политике.
+mcp-gpt-auto is an open-source orchestrator that connects a standard ChatGPT Plus subscription (via Custom GPT Actions) to your local development machine. It combines:
 
-## Текущий MVP
+1. **MCP Gateway** — a full set of tools (filesystem, shell, git, desktop, review, subagents) following the [Model Context Protocol](https://modelcontextprotocol.io/) standard.
+2. **Action Bridge** — an HTTP/REST layer with auto-generated OpenAPI schema, so ChatGPT Custom GPT Actions can call your local tools directly.
+3. **Async Task Runner** — a GitHub-based queue for long-running tasks that survive ChatGPT's 30-second timeout.
 
-MVP делится на два слоя.
+### How it differs from alternatives
 
-### MVP-0: GitHub transport + Windows BAT
+| Feature | mcp-gpt-auto | Serena+mcpo | CoDeveloper GPT | ChatGPT Agent |
+|---|---|---|---|---|
+| Works with regular ChatGPT Plus | Yes | Yes | Yes | Cloud-only |
+| Async tasks (no 30s timeout) | Yes (GitHub queue) | No | No | N/A |
+| Runs on your machine | Yes | Yes | Yes | No (OpenAI VMs) |
+| No API keys needed | Yes | Yes | Yes | N/A |
+| Cross-platform | Windows, Linux, macOS | Linux/macOS | Java (all) | N/A |
+| MCP-native tools | Yes | Yes (via Serena) | No | No |
+| Auto-generated OpenAPI | Yes | Yes (via mcpo) | Partial | N/A |
+| GitHub as task transport | Yes | No | No | No |
 
-Это самый быстрый рабочий цикл без полноценного MCP-сервера:
+**Unique value**: GitHub-as-queue-transport allows tasks to survive any timeout, provides full audit trail in git, and works even when the HTTPS tunnel drops.
 
-1. скачать/обновить репозиторий с GitHub;
-2. создать `.agent/tasks/<task-id>/prompt.md`;
-3. запустить Gemini CLI по этому prompt;
-4. сохранить stdout/stderr/result;
-5. собрать review bundle;
-6. закоммитить и запушить результат после проверки.
+## Quick Start
 
-Скрипты лежат в:
+### Prerequisites
+- Node.js 18+
+- Git
+- An HTTPS tunnel tool: [ngrok](https://ngrok.com/), [cloudflared](https://github.com/cloudflare/cloudflared), or similar
+- ChatGPT Plus subscription
 
-```text
-scripts/win/
+### Setup
+
+```bash
+git clone https://github.com/FokusNIK9/mcp-gpt-auto.git
+cd mcp-gpt-auto
+npm install
+npm run build
 ```
 
-### MVP-1: настоящий MCP
+### Configuration
 
-После MVP-0 добавляется TypeScript MCP Gateway:
+Create a `.env` file in the project root:
 
-- `fs.read/fs.write/fs.patch`;
-- `shell.run`;
-- `git.status/git.diff/git.commit`;
-- `desktop.screenshot`;
-- `subagent.run`;
-- `review.run`;
-- `task.done`.
+```env
+ACTION_BRIDGE_TOKEN=your-secret-token-here
+CONFIRM_PUSH=YES
+PORT=8787
+HOST=127.0.0.1
+# Optional: GITHUB_TOKEN=ghp_... (for task runner git push)
+# Optional: ACTION_BRIDGE_PUBLIC_URL=https://your-tunnel.ngrok-free.app
+```
+
+### Run
+
+**Linux / macOS:**
+```bash
+chmod +x launcher.sh
+./launcher.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+.\Launcher.ps1
+```
+
+**Manual start (any platform):**
+```bash
+# Terminal 1: Start task runner
+CONFIRM_PUSH=YES node dist/runner/github-task-runner.js --loop
+
+# Terminal 2: Start action bridge
+node dist/action-bridge/server.js
+```
+
+### Expose to the internet
+
+```bash
+# Using ngrok:
+ngrok http 8787
+
+# Using cloudflared:
+cloudflared tunnel --url http://localhost:8787
+```
+
+Copy the HTTPS URL and set it:
+```bash
+export ACTION_BRIDGE_PUBLIC_URL=https://your-tunnel-url.ngrok-free.app
+```
+
+### Connect to ChatGPT
+
+1. Go to [ChatGPT GPT Builder](https://chatgpt.com/gpts/editor)
+2. **Configure** -> **Actions** -> **Create new action**
+3. **Authentication**: API Key, Custom Header `X-Agent-Token`, value = your `ACTION_BRIDGE_TOKEN`
+4. **Schema**: Import from `https://your-tunnel-url/openapi.json`
+5. Done! Chat with your GPT and it will control your local machine.
+
+## Architecture
+
+```
+ChatGPT Plus (browser chat)
+  |
+  | HTTPS (ngrok / cloudflared)
+  v
+Action Bridge (localhost:8787)
+  |
+  |-- /tools/*     Direct MCP tool invocation (auto-generated REST endpoints)
+  |-- /workspace/* File operations, script execution
+  |-- /tasks       Async task queue (for long-running ops)
+  |-- /dashboard   JSON dashboard
+  |-- /ui          Web monitoring dashboard
+  |-- /mcp         SSE MCP transport (for MCP-native clients)
+  |-- /openapi.json Auto-generated OpenAPI schema
+  |
+  v
+MCP Tool Federation:
+  - filesystem (read, write, patch, list, tree)
+  - shell (run allowed commands)
+  - git (status, diff, commit, push, pull, log, branch)
+  - desktop (screenshot, active window, window list)
+  - tasks (create, done)
+  - subagents (gemini CLI)
+  - review (bundle, automated review)
+  - gateway (health check)
+```
+
+## Available Tools
+
+### MCP Tools (via Stdio or SSE)
+- `gateway.health` — Health check
+- `fs.read`, `fs.write`, `fs.patch`, `fs.list`, `fs.tree` — File operations
+- `shell.run` — Run allowed commands (git, node, npm, python, bash, etc.)
+- `git.status`, `git.diff`, `git.commit`, `git.push`, `git.pull`, `git.log`, `git.branch`, `git.checkout`, `git.restore` — Git operations
+- `desktop.screenshot`, `desktop.active_window`, `desktop.window_list` — Desktop interaction (cross-platform)
+- `task.create`, `task.done` — Task management
+- `subagent.gemini.run` — Run Gemini CLI as sub-agent
+- `review.bundle`, `review.run` — Code review automation
+
+### REST Endpoints (via Action Bridge)
+All MCP tools are automatically exposed as REST endpoints at `/tools/<tool.name>` with proper OpenAPI schemas.
+
+Additionally:
+- `POST /tasks` — Queue async task
+- `GET /tasks/:id` — Check task status
+- `GET /tasks/:id/report` — Read task report
+- `GET /reports` — List recent reports
+- `GET /dashboard` — Dashboard JSON
+- Workspace API: `/workspace/write`, `/workspace/read`, `/workspace/patch`, `/workspace/list`, `/workspace/tree`, `/workspace/search`, `/workspace/run`, `/workspace/exec`
 
 ## GitHub Task Runner
 
-Этот модуль позволяет ChatGPT управлять локальным ПК через GitHub-очередь задач, даже если прямой MCP-канал не подключён.
+For long-running tasks that exceed ChatGPT's 30-second timeout:
 
-### Как это работает
-1. Ты (или ChatGPT) создаёшь JSON-задачу в `.agent-queue/inbox/`.
-2. Локальный Runner делает `git pull`, видит задачу и выполняет её.
-3. Результат и отчёт пушатся обратно в GitHub.
+1. ChatGPT queues a task via `POST /tasks`
+2. Local runner polls (every 30s), picks up tasks from `.agent-queue/inbox/`
+3. Executes the task (shell commands, Gemini sub-agent, build, etc.)
+4. Pushes results back to GitHub as JSON + Markdown report
+5. ChatGPT reads the result via `GET /tasks/:id/report`
 
-### Запуск Runner на ПК
-```bat
-cd /d "C:\Users\user\Documents\trash\Program\2026-05\01.05\mcp-gpt-auto"
+Task types: `shell`, `gemini`, `review`, `mcp-smoke`
 
-set CONFIRM_PUSH=YES
-scripts\win\21-run-task-runner-loop.bat
-```
+## MCP Client Config
 
-## MCP client config
-
-Добавь в конфиг твоего MCP-клиента (например, Claude Desktop или другой):
+For Claude Desktop, Cursor, or other MCP clients:
 
 ```json
 {
   "mcpServers": {
     "mcp-gpt-auto": {
       "command": "node",
-      "args": [
-        "C:\\Users\\user\\Documents\\trash\\Program\\2026-05\\01.05\\mcp-gpt-auto\\dist\\index.js"
-      ],
+      "args": ["<path-to-repo>/dist/index.js"],
       "env": {
-        "MCP_AUTO_WORKSPACE": "C:\\Users\\user\\Documents\\trash\\Program\\2026-05\\01.05\\mcp-gpt-auto"
+        "MCP_GPT_AUTO_WORKSPACE": "<path-to-repo>"
       }
     }
   }
 }
 ```
 
-## Доступные инструменты (Stage 2)
+## Security
 
-- `gateway.health` — проверка состояния.
-- `fs.read`, `fs.write`, `fs.patch` — работа с файлами.
-- `shell.run` — запуск разрешённых команд.
-- `git.status`, `git.diff`, `git.commit` — работа с Git.
-- `task.create`, `task.done` — управление задачами.
-- `subagent.gemini.run` — запуск саб-агента.
-- `review.bundle`, `review.run` — ревью изменений.
-- `desktop.screenshot` — скриншот экрана.
+- **Secret Redaction**: All outputs (logs, reports, console) are filtered for GitHub tokens, API keys, passwords, and private keys.
+- **Workspace Isolation**: File operations are restricted to the project root.
+- **Blocked Paths**: `.env`, `.ssh`, `AppData`, `id_rsa`, `id_ed25519` are blocked from reading.
+- **Command Allowlist**: Only approved commands can be executed: `git`, `node`, `npm`, `python`, `bash`, etc.
+- **Auth**: Protected endpoints require `X-Agent-Token` header. Dashboard/UI is localhost-only.
 
-## Быстрый старт на Windows
+See [`docs/security-redaction.md`](docs/security-redaction.md) for details.
 
-```bat
-git clone https://github.com/FokusNIK9/mcp-gpt-auto.git
-cd mcp-gpt-auto
+## Documentation
 
-scripts\win\00-bootstrap.bat
-scripts\win\10-install-and-build.bat
-scripts\win\11-start-mcp.bat
-```
+- [`docs/agentic-mcp-plan.md`](docs/agentic-mcp-plan.md) — Full agentic mode plan
+- [`docs/security-redaction.md`](docs/security-redaction.md) — Secret filtering
+- [`docs/github-task-runner.md`](docs/github-task-runner.md) — Task runner docs
+- [`docs/subagent-contract.md`](docs/subagent-contract.md) — Sub-agent protocol
+- [`docs/gpt-action-bridge.md`](docs/gpt-action-bridge.md) — Action Bridge setup
+- [`docs/scripts-guide.md`](docs/scripts-guide.md) — Scripts reference
 
-## Как подключить к MCP-клиенту
+## License
 
-Добавь в конфиг твоего MCP-клиента (например, Claude Desktop или другой):
-
-```json
-{
-  "mcpServers": {
-    "mcp-gpt-auto": {
-      "command": "node",
-      "args": [
-        "C:/Users/user/Documents/trash/Program/2026-05/01.05/mcp-gpt-auto/dist/index.js"
-      ],
-      "env": {
-        "MCP_GPT_AUTO_WORKSPACE": "C:/Users/user/Documents/trash/Program/2026-05/01.05/mcp-gpt-auto"
-      }
-    }
-  }
-}
-```
-
-*Замени пути на реальные абсолютные пути к твоей папке репозитория.*
-
-## Проверка ручного агентного цикла
-
-```bat
-scripts\win\02-new-task.bat test-task "Проверить рабочий цикл"
-scripts\win\03-run-gemini-task.bat test-task
-scripts\win\04-review-bundle.bat test-task
-```
-
-Пушить изменения:
-
-```bat
-scripts\win\05-push-to-github.bat "Update agent MVP files"
-```
-
-По умолчанию `05-push-to-github.bat` требует ручного подтверждения через переменную:
-
-```bat
-set CONFIRM_PUSH=YES
-scripts\win\05-push-to-github.bat "commit message"
-```
-
-## Security and Secrets
-
-Проект включает автоматическую систему фильтрации секретов (Secret Redaction). Токены GitHub, ключи API и пароли автоматически заменяются на `[REDACTED]` в отчётах и логах.
-
-Подробнее см. [`docs/security-redaction.md`](docs/security-redaction.md).
-
-**Важно:** Никогда не копируйте реальные токены в чат или в файлы `prompt.md`.
-
-## GPT Action Bridge
-
-The bridge allows Custom GPTs to queue tasks and read reports via HTTPS.
-
-1. Start runner loop: `scripts\win\21-run-task-runner-loop.bat`.
-2. Start bridge: `scripts\win\40-start-action-bridge.bat` (requires `ACTION_BRIDGE_TOKEN`).
-3. Expose port 8787 (e.g., via `ngrok`).
-4. Set `ACTION_BRIDGE_PUBLIC_URL` to the HTTPS tunnel URL and import `<tunnel-url>/openapi.json` into your Custom GPT Action.
-
-Only `GET /health` and `GET /openapi.json` are public. All task/report endpoints require the `X-Agent-Token` header and only write/read queue files; they do not execute shell, fs, git, or MCP calls directly.
-
-See [docs/gpt-action-bridge.md](docs/gpt-action-bridge.md) for details.
-
-## Документы
-
-- [`docs/agentic-mcp-plan.md`](docs/agentic-mcp-plan.md) — общий план полного агентного режима.
-- [`docs/security-redaction.md`](docs/security-redaction.md) — система фильтрации секретов.
-- [`docs/github-task-runner.md`](docs/github-task-runner.md) — документация раннера задач.
-- [`docs/subagent-contract.md`](docs/subagent-contract.md) — формат задач и ответов саб-агента.
-- [`docs/security-policy.md`](docs/security-policy.md) — политика безопасности.
-- [`docs/operator-workflow.md`](docs/operator-workflow.md) — как управлять циклом из чата.
-
-## Главный принцип
-
-Агент не получает “полную свободу”. Агент получает воспроизводимый цикл:
-
-```text
-task -> subagent -> result -> review -> debug -> commit -> done
-```
-
-Каждый шаг должен оставлять след в `.agent/tasks/<task-id>/`.
+MIT

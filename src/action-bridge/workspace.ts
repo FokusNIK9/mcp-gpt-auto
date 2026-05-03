@@ -315,11 +315,14 @@ export function registerWorkspaceRoutes(app: express.Application) {
       const workDir = safe(cwd || ".");
       await fs.writeFile(scriptFile, scriptContent, "utf8");
       
-      let cmd = "powershell";
-      let args = ["-ExecutionPolicy", "Bypass", "-File", scriptFile];
+      let cmd: string;
+      let args: string[];
       if (ext === "py") { cmd = "python"; args = [scriptFile]; }
-      if (ext === "js") { cmd = "node"; args = [scriptFile]; }
-      if (ext === "bat") { cmd = "cmd"; args = ["/c", scriptFile]; }
+      else if (ext === "js") { cmd = "node"; args = [scriptFile]; }
+      else if (ext === "sh") { cmd = "bash"; args = [scriptFile]; }
+      else if (ext === "bat" && process.platform === "win32") { cmd = "cmd"; args = ["/c", scriptFile]; }
+      else if (ext === "ps1" && process.platform === "win32") { cmd = "powershell"; args = ["-ExecutionPolicy", "Bypass", "-File", scriptFile]; }
+      else { cmd = "bash"; args = [scriptFile]; }
       
       const result = await run(cmd, args, workDir, "", timeoutMs || 120000) as any;
       await fs.writeFile(logFile, JSON.stringify({ logId, ...result, timestamp: new Date().toISOString() }, null, 2));
