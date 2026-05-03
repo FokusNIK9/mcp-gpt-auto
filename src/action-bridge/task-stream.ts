@@ -17,7 +17,9 @@ export interface TaskProgressEvent {
 // Global event bus for task progress
 class TaskProgressBus extends EventEmitter {
 	emit(taskId: string, event: TaskProgressEvent): boolean {
-		return super.emit(taskId, event) || super.emit("*", event);
+		const a = super.emit(taskId, event);
+		const b = super.emit("*", event);
+		return a || b;
 	}
 }
 

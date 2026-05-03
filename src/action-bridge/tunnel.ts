@@ -27,7 +27,8 @@ export interface TunnelConfig {
  */
 async function isAvailable(cmd: string): Promise<boolean> {
 	try {
-		await execFileAsync("which", [cmd]);
+		const checkCmd = process.platform === "win32" ? "where" : "which";
+		await execFileAsync(checkCmd, [cmd]);
 		return true;
 	} catch {
 		return false;

@@ -9,7 +9,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { TaskFile, TaskType } from "./task-types.js";
-import { inboxDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
+import { inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 
 const AGENT_LABEL = "agent-task";
 const PROCESSED_FILE = ".agent-queue/.issues-processed.json";
@@ -195,6 +195,7 @@ export async function syncIssuesToTasks(root: string, owner: string, repo: strin
 		const taskId = `issue-${issue.number}`;
 		const exists = await Promise.any([
 			fs.stat(path.join(inboxDir, `${taskId}.json`)),
+			fs.stat(path.join(runningDir, `${taskId}.json`)),
 			fs.stat(path.join(doneDir, `${taskId}.json`)),
 			fs.stat(path.join(failedDir, `${taskId}.json`)),
 		]).catch(() => null);

@@ -46,6 +46,7 @@ function generateToken(): string {
  * Validate client credentials.
  */
 function validateClient(clientId: string, clientSecret: string): boolean {
+	if (!CLIENT_ID || !CLIENT_SECRET) return false;
 	return clientId === CLIENT_ID && clientSecret === CLIENT_SECRET;
 }
 
