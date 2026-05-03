@@ -1,12 +1,30 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { TaskFile, TaskResult } from "./task-types.js";
+import { TaskFile, TaskResult, DEFAULT_RETRY_POLICY } from "./task-types.js";
 import { run, audit, rel, taskDir } from "../gateway/utils.js";
 import { root, inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 import { redactText, redactSecrets } from "../gateway/redact.js";
+import {
+    acquireTaskLock, releaseTaskLock, areDependenciesMet,
+    shouldRetry, recordRetryAttempt, getRetryMeta, isReadyForRetry,
+    clearRetryMeta, sortByPriority,
+} from "./task-scheduler.js";
+import { syncIssuesToTasks, reportTaskToIssue } from "./github-issues.js";
+
+// Relay progress to bridge via HTTP (cross-process compatible)
+const BRIDGE_URL = process.env.ACTION_BRIDGE_URL || "http://127.0.0.1:8787";
+function emitProgress(taskId: string, type: string, data: Record<string, unknown> = {}): void {
+    fetch(`${BRIDGE_URL}/api/progress`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, type, data }),
+    }).catch(() => { /* best-effort, bridge might not be running */ });
+}
 
 process.env.GIT_TERMINAL_PROMPT = "0";
 process.env.GCM_INTERACTIVE = "never";
+
+const RUNNER_ID = process.env.RUNNER_ID || `runner-${process.pid}-${Date.now()}`;
 
 function gitAuthArgs(args: string[]) {
     const token = process.env.GITHUB_TOKEN;
@@ -93,12 +111,34 @@ async function processTask(taskPath: string) {
     const taskId = path.basename(taskPath, ".json");
     const runningPath = path.join(runningDir, `${taskId}.json`);
     
-    console.log(`[Runner] Starting task: ${taskId}`);
+    console.log(`[Runner:${RUNNER_ID}] Starting task: ${taskId}`);
     const content = await fs.readFile(taskPath, "utf8");
     const task = JSON.parse(content) as TaskFile;
 
+    // Check dependencies
+    const { met, blocked } = await areDependenciesMet(task);
+    if (!met) {
+        console.log(`[Runner] Task ${taskId} blocked on dependencies: ${blocked.join(", ")}`);
+        emitProgress(taskId, "progress", { message: `Blocked on: ${blocked.join(", ")}` });
+        return;
+    }
+
+    // Check retry readiness
+    if (!(await isReadyForRetry(taskId))) {
+        const meta = await getRetryMeta(taskId);
+        console.log(`[Runner] Task ${taskId} in backoff until ${meta?.nextRetryAt}`);
+        return;
+    }
+
+    // Acquire lock (multi-runner safety)
+    if (!(await acquireTaskLock(taskId, RUNNER_ID))) {
+        console.log(`[Runner] Task ${taskId} locked by another runner, skipping`);
+        return;
+    }
+
     // Move to running
     await fs.rename(taskPath, runningPath);
+    emitProgress(taskId, "started", { runner: RUNNER_ID, type: task.type, title: task.title });
     await pushChanges(`Start task ${taskId}`);
 
     const startedAt = new Date().toISOString();
@@ -115,8 +155,14 @@ async function processTask(taskPath: string) {
 
     try {
         if (task.type === "shell" && task.commands) {
-            for (const cmd of task.commands) {
+            for (let i = 0; i < task.commands.length; i++) {
+                const cmd = task.commands[i];
                 console.log(`[Runner] Executing: ${cmd.command} ${cmd.args.join(" ")}`);
+                emitProgress(taskId, "command_output", {
+                    step: i + 1,
+                    total: task.commands.length,
+                    command: `${cmd.command} ${cmd.args.join(" ")}`,
+                });
                 const r = await run(cmd.command, cmd.args, root) as any;
                 result.commandsRun.push({
                     command: `${cmd.command} ${cmd.args.join(" ")}`,
@@ -222,6 +268,27 @@ async function processTask(taskPath: string) {
     }
 
     result.finishedAt = new Date().toISOString();
+    result.durationMs = new Date(result.finishedAt).getTime() - new Date(result.startedAt).getTime();
+
+    // Handle retry logic for failed tasks
+    if (result.status === "failed" && shouldRetry(task, (await getRetryMeta(taskId))?.attempts || 0)) {
+        const policy = task.retry || DEFAULT_RETRY_POLICY;
+        const meta = await recordRetryAttempt(taskId, result.summary, policy);
+        console.log(`[Runner] Task ${taskId} failed, scheduling retry ${meta.attempts}/${policy.maxAttempts} at ${meta.nextRetryAt}`);
+        emitProgress(taskId, "retrying", { attempt: meta.attempts, nextRetryAt: meta.nextRetryAt });
+
+        // Move back to inbox for retry
+        if (await fs.stat(runningPath).catch(() => null)) {
+            await fs.rename(runningPath, path.join(inboxDir, `${taskId}.json`));
+        }
+        await releaseTaskLock(taskId);
+        return;
+    }
+
+    // Clear retry meta on success
+    if (result.status === "done") {
+        await clearRetryMeta(taskId);
+    }
 
     // Finalize
     const targetDir = result.status === "done" ? doneDir : failedDir;
@@ -232,6 +299,28 @@ async function processTask(taskPath: string) {
     // Remove from running
     if (await fs.stat(runningPath).catch(() => null)) {
         await fs.unlink(runningPath);
+    }
+
+    // Release lock
+    await releaseTaskLock(taskId);
+
+    // Emit completion event
+    emitProgress(taskId, result.status === "done" ? "completed" : "failed", {
+        summary: result.summary,
+        durationMs: result.durationMs,
+    });
+
+    // Report back to GitHub issue if this task came from one
+    if (task.sourceIssue) {
+        const repoUrl = process.env.GITHUB_REMOTE_URL || "";
+        const match = repoUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+        if (match) {
+            await reportTaskToIssue(match[1], match[2], task.sourceIssue, {
+                status: result.status,
+                summary: result.summary,
+                reportPath: result.reportPath,
+            });
+        }
     }
 
     // Create Markdown Report
@@ -273,19 +362,40 @@ async function processTask(taskPath: string) {
 async function runOnce() {
     if (!await pullChanges()) return;
 
+    // Sync GitHub Issues into task queue (if configured)
+    const repoUrl = process.env.GITHUB_REMOTE_URL || "";
+    const repoMatch = repoUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+    if (repoMatch && process.env.GITHUB_ISSUES_SYNC === "true") {
+        const created = await syncIssuesToTasks(root, repoMatch[1], repoMatch[2]);
+        if (created > 0) console.log(`[Runner] Synced ${created} new tasks from GitHub Issues`);
+    }
+
     if (!(await fs.stat(inboxDir).catch(() => null))) {
         await fs.mkdir(inboxDir, { recursive: true });
     }
 
     const files = await fs.readdir(inboxDir);
-    const tasks = files.filter(f => f.endsWith(".json")).sort();
+    const taskFiles = files.filter(f => f.endsWith(".json") && !f.endsWith(".retry.json")).sort();
 
-    if (tasks.length === 0) {
+    if (taskFiles.length === 0) {
         console.log("[Runner] No tasks in inbox.");
         return;
     }
 
-    const taskFile = path.join(inboxDir, tasks[0]);
+    // Load and sort by priority
+    const loadedTasks: Array<{ file: string; task: TaskFile }> = [];
+    for (const file of taskFiles) {
+        try {
+            const content = await fs.readFile(path.join(inboxDir, file), "utf8");
+            loadedTasks.push({ file, task: JSON.parse(content) });
+        } catch { /* skip malformed */ }
+    }
+
+    const sorted = sortByPriority(loadedTasks.map(t => t.task));
+    const firstTask = sorted[0];
+    if (!firstTask) return;
+
+    const taskFile = path.join(inboxDir, `${firstTask.taskId}.json`);
     await processTask(taskFile);
 }
 

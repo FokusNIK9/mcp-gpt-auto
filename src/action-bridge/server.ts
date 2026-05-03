@@ -2,12 +2,18 @@ import express from "express";
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { root } from "../gateway/config.js";
+import { root, inboxDir, runningDir, doneDir, failedDir, reportsDir } from "../gateway/config.js";
 import { redactText, redactSecrets } from "../gateway/redact.js";
 import { QueueTaskRequestSchema } from "./types.js";
 import { registerDashboardRoutes, initWebSocket, broadcast, notifyWebhook } from "./dashboard.js";
 import { registerWorkspaceRoutes, workspaceOpenApiPaths } from "./workspace.js";
 import { registerMcpSseRoutes } from "./mcp-sse.js";
+import { generateAutoOpenApi } from "./auto-openapi.js";
+import { registerTaskStreamRoutes } from "./task-stream.js";
+import { registerTaskSearchRoutes } from "./task-search.js";
+import { registerOAuthRoutes, isOAuthEnabled, validateOAuthToken } from "./oauth.js";
+import { startTunnel, getPublicUrl, stopTunnel } from "./tunnel.js";
+import { initMcpProxy, registerMcpProxyRoutes, getMcpProxyOpenApiPaths, getMcpProxyStatus, shutdownMcpProxy } from "./mcp-proxy.js";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -28,12 +34,8 @@ const PORT = parseInt(process.env.PORT || "8787");
 const TOKEN = process.env.ACTION_BRIDGE_TOKEN;
 const PUBLIC_URL = process.env.ACTION_BRIDGE_PUBLIC_URL || `http://${HOST}:${PORT}`;
 
-const queueDir = path.join(root, ".agent-queue");
-const inboxDir = path.join(queueDir, "inbox");
-const runningDir = path.join(queueDir, "running");
-const doneDir = path.join(queueDir, "done");
-const failedDir = path.join(queueDir, "failed");
-const reportsDir = path.join(queueDir, "reports");
+// Auto-generate OpenAPI + Express routes from MCP tools
+const autoOpenApi = generateAutoOpenApi();
 
 function buildOpenApiSchema() {
   return {
@@ -90,7 +92,7 @@ function buildOpenApiSchema() {
             },
             priority: {
               type: "string",
-              enum: ["low", "normal", "high"],
+              enum: ["low", "normal", "high", "critical"],
               default: "normal",
             },
             instructions: { type: "string" },
@@ -261,8 +263,53 @@ function buildOpenApiSchema() {
           },
         },
       },
+      "/tasks/search": {
+        get: {
+          operationId: "searchTasks",
+          summary: "Search and filter task history.",
+          parameters: [
+            { name: "status", in: "query", schema: { type: "string", enum: ["inbox", "running", "done", "failed", "all"], default: "all" } },
+            { name: "type", in: "query", schema: { type: "string" } },
+            { name: "tag", in: "query", schema: { type: "string" } },
+            { name: "query", in: "query", schema: { type: "string" } },
+            { name: "limit", in: "query", schema: { type: "integer", default: 50, maximum: 200 } },
+            { name: "offset", in: "query", schema: { type: "integer", default: 0 } },
+            { name: "sortBy", in: "query", schema: { type: "string", enum: ["createdAt", "modifiedAt", "priority"], default: "createdAt" } },
+            { name: "sortOrder", in: "query", schema: { type: "string", enum: ["asc", "desc"], default: "desc" } },
+            { name: "since", in: "query", schema: { type: "string", format: "date-time" } },
+            { name: "until", in: "query", schema: { type: "string", format: "date-time" } },
+          ],
+          responses: { "200": { description: "Search results.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+        },
+      },
+      "/tasks/stats": {
+        get: {
+          operationId: "getTaskStats",
+          summary: "Get aggregate task statistics.",
+          responses: { "200": { description: "Task statistics.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
+        },
+      },
+      "/tasks/{taskId}/stream": {
+        get: {
+          operationId: "streamTaskProgress",
+          summary: "Subscribe to real-time task progress via SSE.",
+          parameters: [{ name: "taskId", in: "path", required: true, schema: { type: "string" } }],
+          responses: { "200": { description: "SSE stream of progress events." } },
+        },
+      },
+      "/tasks/stream": {
+        get: {
+          operationId: "streamAllTasks",
+          summary: "Subscribe to all task progress events via SSE.",
+          responses: { "200": { description: "SSE firehose of all task events." } },
+        },
+      },
       // Workspace API — file-based code-agent operations
       ...workspaceOpenApiPaths,
+      // Auto-generated MCP tool endpoints (direct invocation)
+      ...autoOpenApi.paths,
+      // External MCP server tools (via mcp-proxy)
+      ...getMcpProxyOpenApiPaths(),
     },
   };
 }
@@ -283,11 +330,15 @@ function isLocalRequest(req: express.Request): boolean {
 const auth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   // Public endpoints (no auth needed)
   if (req.path === "/health" || req.path === "/openapi.json") return next();
+  // OAuth endpoints are public (they handle their own auth)
+  if (req.path.startsWith("/oauth/")) return next();
   // Dashboard & Local Sync endpoints — local access only
-  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file") {
+  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file" || req.path === "/ext/status") {
     if (isLocalRequest(req)) return next();
     return res.status(403).json({ ok: false, error: "This endpoint is only accessible from localhost" });
   }
+  // Allow local dashboard to create tasks without token
+  if (isLocalRequest(req) && req.headers["x-agent-token"] === "local-dashboard") return next();
   
   // Accept token from X-Agent-Token header or Authorization: Bearer header
   const agentToken = req.headers["x-agent-token"];
@@ -296,6 +347,12 @@ const auth = (req: express.Request, res: express.Response, next: express.NextFun
     ? authHeader.slice(7)
     : null;
   const providedToken = agentToken || bearerToken;
+
+  // Try OAuth token validation first (if enabled)
+  if (isOAuthEnabled() && typeof bearerToken === "string") {
+    const oauthRecord = validateOAuthToken(bearerToken);
+    if (oauthRecord) return next();
+  }
 
   if (!TOKEN) {
     console.error("[Bridge] ACTION_BRIDGE_TOKEN not set in environment");
@@ -320,6 +377,12 @@ app.get("/health", (_req, res) => {
 app.get("/openapi.json", (_req, res) => {
   res.json(buildOpenApiSchema());
 });
+
+// Register task search & stats routes BEFORE parametric /tasks/:taskId
+registerTaskSearchRoutes(app);
+
+// Register task streaming routes (SSE for real-time progress)
+registerTaskStreamRoutes(app);
 
 app.post("/tasks", async (req, res) => {
   const result = QueueTaskRequestSchema.safeParse(req.body);
@@ -576,15 +639,31 @@ registerDashboardRoutes(app);
 // Register workspace routes (file-based code-agent API)
 registerWorkspaceRoutes(app);
 
+// Register auto-generated MCP tool routes (direct invocation via REST)
+autoOpenApi.registerRoutes(app);
+console.log(`[Bridge] Auto-registered ${autoOpenApi.toolNames.length} MCP tools as REST endpoints: ${autoOpenApi.toolNames.join(", ")}`);
+
 // Register MCP SSE transport (for Devin / external MCP clients)
 registerMcpSseRoutes(app);
 
+// Register OAuth2 routes (if enabled)
+registerOAuthRoutes(app);
+
+// MCP Proxy status endpoint
+app.get("/ext/status", (_req, res) => {
+  res.json({ ok: true, servers: getMcpProxyStatus() });
+});
 
 // Create HTTP server and attach WebSocket
 const server = http.createServer(app);
 initWebSocket(server);
 
-server.listen(PORT, HOST, () => {
+// Initialize MCP Proxy (external servers) then start listening
+initMcpProxy().then(() => {
+  registerMcpProxyRoutes(app);
+}).catch(() => { /* errors logged inside */ });
+
+server.listen(PORT, HOST, async () => {
   console.log(`[Bridge] Action bridge listening on http://${HOST}:${PORT}`);
   console.log(`[Bridge] Dashboard: http://${HOST}:${PORT}/ui`);
   console.log(`[Bridge] WebSocket: ws://${HOST}:${PORT}/ws`);
@@ -593,4 +672,33 @@ server.listen(PORT, HOST, () => {
   if (!TOKEN) {
     console.warn("[Bridge] WARNING: ACTION_BRIDGE_TOKEN is not set. Auth will fail.");
   }
+
+  // Auto-start tunnel if requested
+  if (process.env.AUTO_TUNNEL === "true") {
+    try {
+      const provider = (process.env.TUNNEL_PROVIDER || "auto") as "cloudflared" | "ngrok" | "auto";
+      const url = await startTunnel({ port: PORT, provider });
+      console.log(`[Bridge] Tunnel active: ${url}`);
+      console.log(`[Bridge] Use this URL in your Custom GPT Action configuration.`);
+    } catch (err: any) {
+      console.warn(`[Bridge] Tunnel failed: ${err.message}`);
+      console.warn("[Bridge] Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
+    }
+  }
+});
+
+// Graceful shutdown
+process.on("SIGINT", () => {
+  console.log("\n[Bridge] Shutting down...");
+  shutdownMcpProxy();
+  stopTunnel();
+  server.close();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  shutdownMcpProxy();
+  stopTunnel();
+  server.close();
+  process.exit(0);
 });
