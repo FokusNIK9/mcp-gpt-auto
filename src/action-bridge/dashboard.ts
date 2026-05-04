@@ -476,7 +476,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mcp-gpt-auto — Dashboard</title>
+<title>mcp-gpt-auto — Панель управления</title>
 <style>
   :root {
     --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -574,8 +574,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <body>
 <div class="container">
   <header>
-    <h1>mcp-gpt-auto Dashboard</h1>
-    <span id="wsStatus" class="ws-status disconnected">disconnected</span>
+    <h1>mcp-gpt-auto — Панель управления</h1>
+    <span id="wsStatus" class="ws-status disconnected">отключён</span>
   </header>
 
   <div class="stats" id="stats"></div>
@@ -583,37 +583,38 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <section class="health-panel" id="healthPanel">
     <div class="health-head">
-      <div class="health-title">Dashboard 2.0 Health</div>
-      <div class="health-updated" id="healthUpdated">loading...</div>
+      <div class="health-title">Состояние системы</div>
+      <div class="health-updated" id="healthUpdated">загрузка...</div>
     </div>
-    <div id="healthSummary"><div class="empty">Loading health summary...</div></div>
+    <div id="healthSummary"><div class="empty">Загрузка состояния...</div></div>
   </section>
 
   <div class="tabs">
-    <div class="tab active" data-panel="activity">Activity</div>
-    <div class="tab" data-panel="newtask">+ New Task</div>
-    <div class="tab" data-panel="commands">Commands</div>
-    <div class="tab" data-panel="subagents">Sub-agents</div>
-    <div class="tab" data-panel="proxy">MCP Proxy</div>
-    <div class="tab" data-panel="audit">Audit Log</div>
+    <div class="tab active" data-panel="activity">Задачи</div>
+    <div class="tab" data-panel="newtask">+ Новая задача</div>
+    <div class="tab" data-panel="commands">Команды</div>
+    <div class="tab" data-panel="subagents">Подагенты</div>
+    <div class="tab" data-panel="proxy">MCP Прокси</div>
+    <div class="tab" data-panel="logs">Логи Runner</div>
+    <div class="tab" data-panel="audit">Журнал</div>
   </div>
 
   <div id="activity" class="panel active"></div>
   <div id="newtask" class="panel">
     <div style="max-width:600px;margin:0 auto">
-      <h2 style="margin-bottom:16px;font-size:16px">Create New Task</h2>
+      <h2 style="margin-bottom:16px;font-size:16px">Создать задачу</h2>
       <form id="taskForm" style="display:flex;flex-direction:column;gap:12px">
         <div>
-          <label style="font-size:12px;color:var(--muted)">Task ID</label>
-          <input id="nt-id" type="text" placeholder="my-task-name" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" />
+          <label style="font-size:12px;color:var(--muted)">ID задачи</label>
+          <input id="nt-id" type="text" placeholder="имя-задачи" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" />
         </div>
         <div>
-          <label style="font-size:12px;color:var(--muted)">Title</label>
-          <input id="nt-title" type="text" placeholder="What should be done" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" />
+          <label style="font-size:12px;color:var(--muted)">Название</label>
+          <input id="nt-title" type="text" placeholder="Что нужно сделать" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px" />
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div>
-            <label style="font-size:12px;color:var(--muted)">Type</label>
+            <label style="font-size:12px;color:var(--muted)">Тип</label>
             <select id="nt-type" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
               <option value="shell">Shell</option>
               <option value="gemini">Gemini (AI)</option>
@@ -622,30 +623,37 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
             </select>
           </div>
           <div>
-            <label style="font-size:12px;color:var(--muted)">Priority</label>
+            <label style="font-size:12px;color:var(--muted)">Приоритет</label>
             <select id="nt-priority" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px">
-              <option value="low">Low</option>
-              <option value="normal" selected>Normal</option>
-              <option value="high">High</option>
-              <option value="critical">Critical</option>
+              <option value="low">Низкий</option>
+              <option value="normal" selected>Обычный</option>
+              <option value="high">Высокий</option>
+              <option value="critical">Критический</option>
             </select>
           </div>
         </div>
         <div>
-          <label style="font-size:12px;color:var(--muted)">Instructions</label>
-          <textarea id="nt-instructions" rows="4" placeholder="Detailed instructions for the agent..." style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;resize:vertical"></textarea>
+          <label style="font-size:12px;color:var(--muted)">Инструкции</label>
+          <textarea id="nt-instructions" rows="4" placeholder="Подробные инструкции для агента..." style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;resize:vertical"></textarea>
         </div>
         <div>
-          <label style="font-size:12px;color:var(--muted)">Commands (one per line, format: command arg1 arg2)</label>
+          <label style="font-size:12px;color:var(--muted)">Команды (по одной на строку: команда арг1 арг2)</label>
           <textarea id="nt-commands" rows="3" placeholder="npm run build\\ngit status" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:monospace;font-size:13px;resize:vertical"></textarea>
         </div>
-        <button type="submit" class="btn" style="padding:10px 20px;background:var(--accent);border-color:var(--accent);color:#fff;font-size:14px;font-weight:600;align-self:flex-start">Create Task</button>
+        <button type="submit" class="btn" style="padding:10px 20px;background:var(--accent);border-color:var(--accent);color:#fff;font-size:14px;font-weight:600;align-self:flex-start">Создать</button>
       </form>
     </div>
   </div>
   <div id="commands" class="panel"></div>
   <div id="subagents" class="panel"></div>
-  <div id="proxy" class="panel"><div class="empty">Loading MCP Proxy status...</div></div>
+  <div id="proxy" class="panel"><div class="empty">Загрузка статуса MCP Прокси...</div></div>
+  <div id="logs" class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="font-size:14px;font-weight:600">Прогресс задач (SSE)</span>
+      <button class="btn" id="clearLogs" style="font-size:11px">Очистить</button>
+    </div>
+    <div id="logEntries" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:monospace;font-size:12px;max-height:500px;overflow-y:auto;white-space:pre-wrap"></div>
+  </div>
   <div id="audit" class="panel"></div>
 </div>
 
@@ -703,55 +711,55 @@ async function loadHealthSummary() {
     if (!data.ok) throw new Error(data.error || 'health summary failed');
     renderHealthSummary(data);
   } catch {
-    document.getElementById('healthUpdated').textContent = 'health unavailable';
-    document.getElementById('healthSummary').innerHTML = '<div class="empty">Failed to load Dashboard 2.0 health summary</div>';
+    document.getElementById('healthUpdated').textContent = 'недоступно';
+    document.getElementById('healthSummary').innerHTML = '<div class="empty">Не удалось загрузить состояние системы</div>';
   }
 }
 
 function renderHealthSummary(data) {
   const health = data.health || 'warning';
-  const warnings = data.warnings && data.warnings.length ? data.warnings : ['No warnings in current health window'];
-  const recommendations = data.recommendations && data.recommendations.length ? data.recommendations : ['No action needed right now'];
+  const warnings = data.warnings && data.warnings.length ? data.warnings : ['Нет предупреждений'];
+  const recommendations = data.recommendations && data.recommendations.length ? data.recommendations : ['Действий не требуется'];
   const gitLines = data.git && data.git.lines && data.git.lines.length ? data.git.lines.map(esc).join('\\n') : 'working tree clean';
   const queue = data.summary || { total: 0, running: 0, failed: 0 };
   const audit = data.audit || { recentRejected: 0, recentFailures: 0 };
-  document.getElementById('healthUpdated').textContent = 'updated ' + (data.updatedAt || 'now');
+  document.getElementById('healthUpdated').textContent = 'обновлено ' + localTime(data.updatedAt || new Date().toISOString());
   document.getElementById('healthSummary').innerHTML =
     '<div class="health-grid">' +
-      '<div class="health-card"><div class="label">Overall</div><div class="value"><span class="health-badge ' + esc(health) + '">' + esc(health) + '</span></div></div>' +
-      '<div class="health-card"><div class="label">Queue</div><div class="value">' + queue.running + ' running</div></div>' +
-      '<div class="health-card"><div class="label">Failed tasks</div><div class="value">' + queue.failed + '</div></div>' +
-      '<div class="health-card"><div class="label">Git changes</div><div class="value">' + (data.git ? data.git.changed : '?') + '</div><div class="git-lines">' + gitLines + '</div></div>' +
+      '<div class="health-card"><div class="label">Статус</div><div class="value"><span class="health-badge ' + esc(health) + '">' + esc(health) + '</span></div></div>' +
+      '<div class="health-card"><div class="label">Очередь</div><div class="value">' + queue.running + ' выполняется</div></div>' +
+      '<div class="health-card"><div class="label">Ошибки</div><div class="value">' + queue.failed + '</div></div>' +
+      '<div class="health-card"><div class="label">Git изменения</div><div class="value">' + (data.git ? data.git.changed : '?') + '</div><div class="git-lines">' + gitLines + '</div></div>' +
     '</div>' +
     '<div class="health-lists">' +
-      '<div class="health-list"><h3>Warnings</h3><ul>' + warnings.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul></div>' +
-      '<div class="health-list"><h3>Recommendations</h3><ul>' + recommendations.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul></div>' +
+      '<div class="health-list"><h3>Предупреждения</h3><ul>' + warnings.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul></div>' +
+      '<div class="health-list"><h3>Рекомендации</h3><ul>' + recommendations.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul></div>' +
     '</div>' +
-    '<div class="health-updated" style="margin-top:10px">Recent audit: ' + audit.recentFailures + ' failures, ' + audit.recentRejected + ' rejected reviews</div>';
+    '<div class="health-updated" style="margin-top:10px">Аудит: ' + audit.recentFailures + ' ошибок, ' + audit.recentRejected + ' отклонённых ревью</div>';
 }
 
 // --- Stats ---
 function renderStats(summary) {
   document.getElementById('stats').innerHTML =
-    '<div class="stat-card"><div class="num">' + summary.total + '</div><div class="label">Total</div></div>' +
-    '<div class="stat-card inbox"><div class="num">' + summary.inbox + '</div><div class="label">In Queue</div></div>' +
-    '<div class="stat-card running"><div class="num">' + summary.running + '</div><div class="label">Running</div></div>' +
-    '<div class="stat-card done"><div class="num">' + summary.done + '</div><div class="label">Done</div></div>' +
-    '<div class="stat-card failed"><div class="num">' + summary.failed + '</div><div class="label">Failed</div></div>' +
-    '<div class="stat-card"><div class="num">' + summary.stale + '</div><div class="label">Stale (3d+)</div></div>';
+    '<div class="stat-card"><div class="num">' + summary.total + '</div><div class="label">Всего</div></div>' +
+    '<div class="stat-card inbox"><div class="num">' + summary.inbox + '</div><div class="label">В очереди</div></div>' +
+    '<div class="stat-card running"><div class="num">' + summary.running + '</div><div class="label">Выполняется</div></div>' +
+    '<div class="stat-card done"><div class="num">' + summary.done + '</div><div class="label">Готово</div></div>' +
+    '<div class="stat-card failed"><div class="num">' + summary.failed + '</div><div class="label">Ошибка</div></div>' +
+    '<div class="stat-card"><div class="num">' + summary.stale + '</div><div class="label">Застарелые (3д+)</div></div>';
 }
 
 // --- Activity Table ---
 function renderActivity(tasks) {
-  if (!tasks.length) { document.getElementById('activity').innerHTML = '<div class="empty">No tasks yet</div>'; return; }
-  let html = '<table><tr><th>Task ID</th><th>Title</th><th>Type</th><th>Status</th><th>Age</th><th>Actions</th></tr>';
+  if (!tasks.length) { document.getElementById('activity').innerHTML = '<div class="empty">Задач пока нет</div>'; return; }
+  let html = '<table><tr><th>ID</th><th>Название</th><th>Тип</th><th>Статус</th><th>Возраст</th><th>Действия</th></tr>';
   for (const t of tasks) {
     const stale = t.isStale ? ' <span class="badge stale">stale</span>' : '';
-    let actions = '<button class="btn" onclick="viewLog(\\'' + t.taskId + '\\')">Log</button> ';
+    let actions = '<button class="btn" onclick="viewLog(\\'' + t.taskId + '\\')">Лог</button> ';
     if (t.status === 'inbox' || t.status === 'running')
-      actions += '<button class="btn cancel" onclick="cancelTask(\\'' + t.taskId + '\\')">Cancel</button>';
+      actions += '<button class="btn cancel" onclick="cancelTask(\\'' + t.taskId + '\\')">Отмена</button>';
     if (t.status === 'failed' || t.status === 'done')
-      actions += '<button class="btn retry" onclick="retryTask(\\'' + t.taskId + '\\')">Retry</button>';
+      actions += '<button class="btn retry" onclick="retryTask(\\'' + t.taskId + '\\')">Повтор</button>';
     html += '<tr><td><code>' + esc(t.taskId) + '</code></td><td>' + esc(t.title) +
       '</td><td><span class="type-badge">' + esc(t.type) + '</span></td><td><span class="badge ' + t.status + '">' + t.status + '</span>' + stale +
       '</td><td>' + t.ageDays + 'd</td><td>' + actions + '</td></tr>';
@@ -763,8 +771,8 @@ function renderActivity(tasks) {
 // --- Commands Table (shell tasks) ---
 function renderCommands(tasks) {
   const shellTasks = tasks.filter(t => t.type === 'shell' || (t.commands && t.commands.length > 0));
-  if (!shellTasks.length) { document.getElementById('commands').innerHTML = '<div class="empty">No shell commands yet</div>'; return; }
-  let html = '<table><tr><th>Task ID</th><th>Commands</th><th>Status</th></tr>';
+  if (!shellTasks.length) { document.getElementById('commands').innerHTML = '<div class="empty">Команд пока нет</div>'; return; }
+  let html = '<table><tr><th>ID</th><th>Команды</th><th>Статус</th></tr>';
   for (const t of shellTasks) {
     const cmds = t.commands.map(c => esc(c.command + ' ' + (c.args || []).join(' '))).join('<br>');
     html += '<tr><td><code>' + esc(t.taskId) + '</code></td><td style="font-family:monospace;font-size:12px">' + cmds +
@@ -777,12 +785,12 @@ function renderCommands(tasks) {
 // --- Sub-agents Table ---
 function renderSubagents(tasks) {
   const geminiTasks = tasks.filter(t => t.type === 'gemini' || (t.taskId || '').toLowerCase().includes('subagent') || (t.title || '').toLowerCase().includes('subagent'));
-  if (!geminiTasks.length) { document.getElementById('subagents').innerHTML = '<div class="empty">No sub-agent tasks yet</div>'; return; }
-  let html = '<table><tr><th>Task ID</th><th>Instructions</th><th>Status</th><th>Actions</th></tr>';
+  if (!geminiTasks.length) { document.getElementById('subagents').innerHTML = '<div class="empty">Подагентов пока нет</div>'; return; }
+  let html = '<table><tr><th>ID</th><th>Инструкции</th><th>Статус</th><th>Действия</th></tr>';
   for (const t of geminiTasks) {
     const instr = esc(t.instructions || '').slice(0, 200);
     html += '<tr><td><code>' + esc(t.taskId) + '</code></td><td>' + instr +
-      '</td><td><span class="badge ' + t.status + '">' + t.status + '</span></td><td><button class="btn" onclick="viewLog(\\'' + t.taskId + '\\')">Log</button></td></tr>';
+      '</td><td><span class="badge ' + t.status + '">' + t.status + '</span></td><td><button class="btn" onclick="viewLog(\\'' + t.taskId + '\\')">Лог</button></td></tr>';
   }
   html += '</table>';
   document.getElementById('subagents').innerHTML = html;
@@ -794,17 +802,17 @@ async function loadAudit() {
     const r = await fetch(API + '/api/audit?limit=100');
     const data = await r.json();
     if (!data.entries || !data.entries.length) {
-      document.getElementById('audit').innerHTML = '<div class="empty">No audit entries</div>';
+      document.getElementById('audit').innerHTML = '<div class="empty">Журнал пуст</div>';
       return;
     }
     let html = '';
     for (const e of data.entries) {
       const cls = e.ok ? '' : ' fail';
-      html += '<div class="audit-entry' + cls + '"><span class="ts">' + esc(e.ts || '') + '</span><span class="tool">' + esc(e.tool || '') +
+      html += '<div class="audit-entry' + cls + '"><span class="ts">' + localTime(e.ts || '') + '</span><span class="tool">' + esc(e.tool || '') +
         '</span><span>' + esc(JSON.stringify(e.data || '')) + '</span></div>';
     }
     document.getElementById('audit').innerHTML = html;
-  } catch { document.getElementById('audit').innerHTML = '<div class="empty">Failed to load audit</div>'; }
+  } catch { document.getElementById('audit').innerHTML = '<div class="empty">Не удалось загрузить журнал</div>'; }
 }
 
 // --- Actions ---
@@ -813,33 +821,34 @@ async function viewLog(taskId) {
     const r = await fetch(API + '/api/logs/' + taskId);
     const data = await r.json();
     let body = '';
-    if (data.task) body += 'Status: ' + data.task.status + '\\nType: ' + data.task.type + '\\nCreated: ' + data.task.createdAt + '\\n\\n';
+    if (data.task) body += 'Статус: ' + data.task.status + '\\nТип: ' + data.task.type + '\\nСоздано: ' + localTime(data.task.createdAt) + '\\n\\n';
     if (data.report) body += data.report;
-    else body += '(no report yet)';
-    openModal('Task: ' + taskId, body);
-  } catch { notify('Failed to load log', 'error'); }
+    else body += '(отчёт ещё не готов)';
+    openModal('Задача: ' + taskId, body);
+  } catch { notify('Не удалось загрузить лог', 'error'); }
 }
 
 async function cancelTask(taskId) {
-  if (!confirm('Cancel task ' + taskId + '?')) return;
+  if (!confirm('Отменить задачу ' + taskId + '?')) return;
   try {
     const r = await fetch(API + '/api/tasks/' + taskId + '/cancel', { method: 'POST' });
     const data = await r.json();
-    if (data.ok) { notify('Cancelled: ' + taskId); refresh(); }
-    else notify(data.error || 'Cancel failed', 'error');
-  } catch { notify('Cancel failed', 'error'); }
+    if (data.ok) { notify('Отменено: ' + taskId); refresh(); }
+    else notify(data.error || 'Ошибка отмены', 'error');
+  } catch { notify('Ошибка отмены', 'error'); }
 }
 
 async function retryTask(taskId) {
   try {
     const r = await fetch(API + '/api/tasks/' + taskId + '/retry', { method: 'POST' });
     const data = await r.json();
-    if (data.ok) { notify('Retried as: ' + data.newTaskId); refresh(); }
-    else notify(data.error || 'Retry failed', 'error');
-  } catch { notify('Retry failed', 'error'); }
+    if (data.ok) { notify('Повтор как: ' + data.newTaskId); refresh(); }
+    else notify(data.error || 'Ошибка повтора', 'error');
+  } catch { notify('Ошибка повтора', 'error'); }
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function localTime(ts) { if (!ts) return ''; try { return new Date(ts).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}); } catch { return ts; } }
 
 // --- Data loading ---
 async function refresh() {
@@ -862,8 +871,8 @@ function connectWs() {
   const ws = new WebSocket(proto + '//' + location.host + '/ws');
   const statusEl = document.getElementById('wsStatus');
 
-  ws.onopen = () => { statusEl.textContent = 'live'; statusEl.className = 'ws-status connected'; };
-  ws.onclose = () => { statusEl.textContent = 'disconnected'; statusEl.className = 'ws-status disconnected'; setTimeout(connectWs, 3000); };
+  ws.onopen = () => { statusEl.textContent = 'онлайн'; statusEl.className = 'ws-status connected'; };
+  ws.onclose = () => { statusEl.textContent = 'отключён'; statusEl.className = 'ws-status disconnected'; setTimeout(connectWs, 3000); };
   ws.onerror = () => ws.close();
   ws.onmessage = (e) => {
     try {
@@ -876,9 +885,9 @@ function connectWs() {
         renderSubagents(msg.data.tasks);
         loadHealthSummary();
       } else if (msg.type === 'cancelled') {
-        notify('Task cancelled: ' + msg.taskId);
+        notify('Задача отменена: ' + msg.taskId);
       } else if (msg.type === 'retried') {
-        notify('Task retried: ' + msg.originalTaskId + ' → ' + msg.newTaskId);
+        notify('Повтор: ' + msg.originalTaskId + ' → ' + msg.newTaskId);
       }
     } catch {}
   };
@@ -909,14 +918,14 @@ document.getElementById('taskForm').addEventListener('submit', async (e) => {
     });
     const data = await r.json();
     if (data.ok) {
-      notify('Task created: ' + taskId);
+      notify('Задача создана: ' + taskId);
       document.getElementById('taskForm').reset();
       document.querySelector('[data-panel="activity"]').click();
       refresh();
     } else {
-      notify(data.error || 'Failed to create task', 'error');
+      notify(data.error || 'Ошибка создания', 'error');
     }
-  } catch (err) { notify('Failed: ' + err.message, 'error'); }
+  } catch (err) { notify('Ошибка: ' + err.message, 'error'); }
 });
 
 // --- MCP Proxy Status ---
@@ -926,18 +935,37 @@ async function loadProxyStatus() {
     const data = await r.json();
     const panel = document.getElementById('proxy');
     if (!data.ok || !data.servers || data.servers.length === 0) {
-      panel.innerHTML = '<div class="empty">No external MCP servers configured.<br><br><span style="font-size:12px;color:var(--muted)">Create <code>mcp-servers.json</code> in project root to add external servers.<br>See <code>mcp-servers.json.example</code> for format.</span></div>';
+      panel.innerHTML = '<div class="empty">Внешние MCP серверы не настроены.<br><br><span style="font-size:12px;color:var(--muted)">Создайте <code>mcp-servers.json</code> в корне проекта.<br>Пример: <code>mcp-servers.json.example</code>.</span></div>';
       return;
     }
-    let html = '<table><tr><th>Server</th><th>Status</th><th>Tools</th></tr>';
+    let html = '<table><tr><th>Сервер</th><th>Статус</th><th>Инструменты</th></tr>';
     for (const s of data.servers) {
-      const badge = s.ready ? '<span class="badge done">ready</span>' : '<span class="badge failed">offline</span>';
+      const badge = s.ready ? '<span class="badge done">готов</span>' : '<span class="badge failed">оффлайн</span>';
       html += '<tr><td><strong>' + esc(s.name) + '</strong></td><td>' + badge + '</td><td>' + s.tools.map(t => '<span class="type-badge">' + esc(t) + '</span> ').join('') + '</td></tr>';
     }
     html += '</table>';
     panel.innerHTML = html;
-  } catch { document.getElementById('proxy').innerHTML = '<div class="empty">Failed to load proxy status</div>'; }
+  } catch { document.getElementById('proxy').innerHTML = '<div class="empty">Не удалось загрузить статус прокси</div>'; }
 }
+
+// --- Runner Logs (SSE) ---
+function connectLogStream() {
+  const logEl = document.getElementById('logEntries');
+  const evtSource = new EventSource(API + '/tasks/stream');
+  evtSource.onmessage = (e) => {
+    try {
+      const evt = JSON.parse(e.data);
+      const time = localTime(evt.timestamp || new Date().toISOString());
+      const line = '[' + time + '] ' + (evt.taskId || '') + ' — ' + (evt.type || 'event') + (evt.data ? ': ' + JSON.stringify(evt.data) : '') + '\\n';
+      logEl.textContent += line;
+      logEl.scrollTop = logEl.scrollHeight;
+    } catch {}
+  };
+  evtSource.onerror = () => { evtSource.close(); setTimeout(connectLogStream, 5000); };
+}
+document.getElementById('clearLogs').addEventListener('click', () => {
+  document.getElementById('logEntries').textContent = '';
+});
 
 // --- Init ---
 refresh();
@@ -945,6 +973,7 @@ loadHealthSummary();
 loadAudit();
 loadProxyStatus();
 connectWs();
+connectLogStream();
 // Fallback polling if WS fails
 setInterval(refresh, 15000);
 setInterval(loadHealthSummary, 15000);
