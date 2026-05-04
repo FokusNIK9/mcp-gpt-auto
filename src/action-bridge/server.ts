@@ -363,7 +363,7 @@ const auth = (req: express.Request, res: express.Response, next: express.NextFun
   // OAuth endpoints are public (they handle their own auth)
   if (req.path.startsWith("/oauth/")) return next();
   // Dashboard & Local Sync endpoints — local access only
-  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file" || req.path === "/ext/status") {
+  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file" || req.path === "/ext/status" || (req.path.startsWith("/tasks/") && req.path.endsWith("/stream")) || req.path === "/tasks/stream") {
     if (isLocalRequest(req)) return next();
     return res.status(403).json({ ok: false, error: "This endpoint is only accessible from localhost" });
   }
