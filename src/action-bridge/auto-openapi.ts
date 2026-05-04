@@ -190,8 +190,7 @@ export function generateAutoOpenApi(): {
 		"/tools/call": {
 			post: {
 				operationId: "callTool",
-				summary: `Call any tool by name. Available: ${toolNames.slice(0, 10).join(", ")}... (${toolNames.length} total). Use listTools to see all.`,
-				description: toolDescriptions.join("\n"),
+				summary: `Call any tool by name. ${toolNames.length} tools available. Use listTools first to see names and params.`,
 				requestBody: {
 					required: true,
 					content: {
