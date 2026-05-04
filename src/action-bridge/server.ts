@@ -319,26 +319,9 @@ function buildOpenApiSchema() {
           responses: { "200": { description: "Task statistics.", content: { "application/json": { schema: { $ref: "#/components/schemas/BasicOk" } } } } },
         },
       },
-      "/tasks/{taskId}/stream": {
-        get: {
-          operationId: "streamTaskProgress",
-          summary: "Subscribe to real-time task progress via SSE.",
-          parameters: [{ name: "taskId", in: "path", required: true, schema: { type: "string" } }],
-          responses: { "200": { description: "SSE stream of progress events." } },
-        },
-      },
-      "/tasks/stream": {
-        get: {
-          operationId: "streamAllTasks",
-          summary: "Subscribe to all task progress events via SSE.",
-          responses: { "200": { description: "SSE firehose of all task events." } },
-        },
-      },
-      // Workspace API — file-based code-agent operations
-      ...workspaceOpenApiPaths,
-      // Auto-generated MCP tool endpoints (direct invocation)
+      // Unified tool endpoints (replaces 24+ individual tool routes in OpenAPI)
       ...autoOpenApi.paths,
-      // External MCP server tools (via mcp-proxy)
+      // External MCP server tools (via mcp-proxy) — included only if <30 total ops
       ...getMcpProxyOpenApiPaths(),
     },
   };

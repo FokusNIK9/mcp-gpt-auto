@@ -139,35 +139,81 @@ export function generateAutoOpenApi(): {
 } {
 	const server = createToolServer();
 	const tools = (server as unknown as { _registeredTools: Record<string, ToolEntry> })._registeredTools;
-	const paths: Record<string, unknown> = {};
 	const toolNames: string[] = [];
 
+	// Collect tool metadata for /tools/list and descriptions
+	const toolDescriptions: string[] = [];
 	for (const [name, tool] of Object.entries(tools)) {
 		if (!tool.enabled) continue;
-
 		toolNames.push(name);
-		const safeName = name.replace(/\./g, "_");
-		const pathKey = `/tools/${name.replace(/\./g, "/")}`;
+		const schema = zodToJsonSchema(tool.inputSchema);
+		const props = schema.properties as Record<string, unknown> | undefined;
+		const paramHint = props && Object.keys(props).length > 0
+			? ` Params: {${Object.keys(props).join(", ")}}`
+			: "";
+		toolDescriptions.push(`${name} — ${(tool.description || "").slice(0, 100)}${paramHint}`);
+	}
 
-		const inputSchema = zodToJsonSchema(tool.inputSchema);
-		const hasProperties = inputSchema.properties && Object.keys(inputSchema.properties as Record<string, unknown>).length > 0;
-
-		const pathDef: Record<string, unknown> = {
-			post: {
-				operationId: `tool_${safeName}`,
-				summary: (tool.description || name).slice(0, 280),
-				...(hasProperties
-					? {
-						requestBody: {
-							required: true,
-							content: {
-								"application/json": {
-									schema: inputSchema,
+	// Only 2 paths exposed in OpenAPI (fits within ChatGPT 30 operation limit)
+	const paths: Record<string, unknown> = {
+		"/tools/list": {
+			get: {
+				operationId: "listTools",
+				summary: "List all available tools with descriptions and parameter schemas.",
+				responses: {
+					"200": {
+						description: "Array of available tools.",
+						content: {
+							"application/json": {
+								schema: {
+									type: "object",
+									properties: {
+										tools: {
+											type: "array",
+											items: {
+												type: "object",
+												properties: {
+													name: { type: "string" },
+													description: { type: "string" },
+													parameters: { type: "object" },
+												},
+											},
+										},
+									},
 								},
 							},
 						},
-					}
-					: {}),
+					},
+				},
+			},
+		},
+		"/tools/call": {
+			post: {
+				operationId: "callTool",
+				summary: `Call any tool by name. Available: ${toolNames.slice(0, 10).join(", ")}... (${toolNames.length} total). Use listTools to see all.`,
+				description: toolDescriptions.join("\n"),
+				requestBody: {
+					required: true,
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								required: ["tool"],
+								properties: {
+									tool: {
+										type: "string",
+										description: `Tool name. One of: ${toolNames.join(", ")}`,
+										enum: toolNames,
+									},
+									args: {
+										type: "object",
+										description: "Tool-specific arguments (see listTools for schema).",
+									},
+								},
+							},
+						},
+					},
+				},
 				responses: {
 					"200": {
 						description: "Tool result.",
@@ -191,14 +237,61 @@ export function generateAutoOpenApi(): {
 							},
 						},
 					},
+					"400": {
+						description: "Unknown tool name.",
+						content: {
+							"application/json": {
+								schema: {
+									type: "object",
+									properties: {
+										ok: { type: "boolean" },
+										error: { type: "string" },
+										available: { type: "array", items: { type: "string" } },
+									},
+								},
+							},
+						},
+					},
 				},
 			},
-		};
-
-		paths[pathKey] = pathDef;
-	}
+		},
+	};
 
 	function registerRoutes(app: express.Application) {
+		// Unified /tools/call endpoint
+		app.post("/tools/call", async (req: express.Request, res: express.Response) => {
+			const { tool: toolName, args } = req.body || {};
+			if (!toolName || typeof toolName !== "string") {
+				return res.status(400).json({ ok: false, error: "Missing 'tool' field.", available: toolNames });
+			}
+			const tool = tools[toolName];
+			if (!tool || !tool.enabled) {
+				return res.status(400).json({ ok: false, error: `Unknown tool: ${toolName}`, available: toolNames });
+			}
+			try {
+				const result = await tool.handler(args || {}, {} as never);
+				res.json(result);
+			} catch (err: unknown) {
+				const message = err instanceof Error ? err.message : String(err);
+				res.status(500).json({ content: [{ type: "text", text: JSON.stringify({ ok: false, error: message }) }] });
+			}
+		});
+
+		// /tools/list endpoint
+		app.get("/tools/list", (_req: express.Request, res: express.Response) => {
+			const list = [];
+			for (const [name, tool] of Object.entries(tools)) {
+				if (!tool.enabled) continue;
+				list.push({
+					name,
+					description: tool.description || "",
+					parameters: zodToJsonSchema(tool.inputSchema),
+				});
+			}
+			res.json({ tools: list });
+		});
+
+		// Keep legacy per-tool routes for backward compatibility
 		for (const [name, tool] of Object.entries(tools)) {
 			if (!tool.enabled) continue;
 
