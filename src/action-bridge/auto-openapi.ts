@@ -259,7 +259,8 @@ export function generateAutoOpenApi(): {
 	function registerRoutes(app: express.Application) {
 		// Unified /tools/call endpoint
 		app.post("/tools/call", async (req: express.Request, res: express.Response) => {
-			const { tool: toolName, args } = req.body || {};
+			const body = req.body || {};
+			const toolName = body.tool;
 			if (!toolName || typeof toolName !== "string") {
 				return res.status(400).json({ ok: false, error: "Missing 'tool' field.", available: toolNames });
 			}
@@ -267,8 +268,26 @@ export function generateAutoOpenApi(): {
 			if (!tool || !tool.enabled) {
 				return res.status(400).json({ ok: false, error: `Unknown tool: ${toolName}`, available: toolNames });
 			}
+
+			// Smart args extraction: accept both {"tool":"x","args":{...}} and {"tool":"x","command":"...",...}
+			let finalArgs: Record<string, unknown>;
+			if (body.args && typeof body.args === "object") {
+				finalArgs = body.args as Record<string, unknown>;
+			} else {
+				// ChatGPT sometimes sends params at top level without args wrapper
+				const { tool: _t, ...rest } = body;
+				finalArgs = rest;
+			}
+
+			// Parse through Zod schema to apply defaults (e.g. args:[], cwd:".", timeoutMs:120000)
+			if (tool.inputSchema && typeof (tool.inputSchema as any).parse === "function") {
+				try {
+					finalArgs = (tool.inputSchema as any).parse(finalArgs);
+				} catch { /* use raw args if parse fails */ }
+			}
+
 			try {
-				const result = await tool.handler(args || {}, {} as never);
+				const result = await tool.handler(finalArgs, {} as never);
 				res.json(result);
 			} catch (err: unknown) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -298,7 +317,10 @@ export function generateAutoOpenApi(): {
 
 			app.post(pathKey, async (req: express.Request, res: express.Response) => {
 				try {
-					const args = req.body || {};
+					let args = req.body || {};
+					if (tool.inputSchema && typeof (tool.inputSchema as any).parse === "function") {
+						try { args = (tool.inputSchema as any).parse(args); } catch { /* use raw */ }
+					}
 					const result = await tool.handler(args, {} as never);
 					res.json(result);
 				} catch (err: unknown) {
