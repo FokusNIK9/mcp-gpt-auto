@@ -18,6 +18,36 @@ import { initMcpProxy, registerMcpProxyRoutes, getMcpProxyOpenApiPaths, getMcpPr
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
+// --- Rate limiter (in-memory, per IP) ---
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || "120", 10);
+const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+
+app.use((req, res, next) => {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  let bucket = rateBuckets.get(ip);
+  if (!bucket || now > bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    rateBuckets.set(ip, bucket);
+  }
+  bucket.count++;
+  res.setHeader("X-RateLimit-Limit", String(RATE_LIMIT_MAX));
+  res.setHeader("X-RateLimit-Remaining", String(Math.max(0, RATE_LIMIT_MAX - bucket.count)));
+  if (bucket.count > RATE_LIMIT_MAX) {
+    return res.status(429).json({ ok: false, error: "Too many requests. Try again later." });
+  }
+  next();
+});
+
+// Cleanup stale buckets every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, bucket] of rateBuckets) {
+    if (now > bucket.resetAt) rateBuckets.delete(ip);
+  }
+}, 300_000);
+
 // CORS middleware for browser addon
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
@@ -333,7 +363,7 @@ const auth = (req: express.Request, res: express.Response, next: express.NextFun
   // OAuth endpoints are public (they handle their own auth)
   if (req.path.startsWith("/oauth/")) return next();
   // Dashboard & Local Sync endpoints — local access only
-  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file" || req.path === "/ext/status") {
+  if (req.path === "/ui" || req.path.startsWith("/api/") || req.path === "/ws" || req.path === "/workspace/file" || req.path === "/ext/status" || (req.path.startsWith("/tasks/") && req.path.endsWith("/stream")) || req.path === "/tasks/stream") {
     if (isLocalRequest(req)) return next();
     return res.status(403).json({ ok: false, error: "This endpoint is only accessible from localhost" });
   }
